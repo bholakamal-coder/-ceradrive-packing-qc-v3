@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "deploy": "wrangler pages deploy . --project-name=ceradrive-packing-qc-v3"
+  },
+  "devDependencies": {
+    "wrangler": "latest"
+  }
+}

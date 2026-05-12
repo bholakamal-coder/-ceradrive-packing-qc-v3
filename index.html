@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ceradrive Packing QC V3</title>
+  <style>
+    *{box-sizing:border-box}
+    body{font-family:Arial, sans-serif;margin:0;background:#f4f6f8;color:#111}
+    .wrap{max-width:1100px;margin:auto;padding:16px}
+    .card{background:#fff;border-radius:16px;padding:18px;margin:14px 0;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+    h1,h2,h3{margin:6px 0 14px}
+    input,select,button{width:100%;padding:13px;margin:6px 0;border:1px solid #d5d7dc;border-radius:10px;font-size:16px}
+    button{background:#111;color:#fff;border:0;font-weight:700;cursor:pointer}
+    button.green{background:#188038}
+    button.red{background:#b3261e}
+    button.blue{background:#2f5bea}
+    button.light{background:#e9ecef;color:#111}
+    .tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0}
+    .tabs button{background:#fff;color:#222;border:1px solid #d5d7dc}
+    .tabs button.active{background:#2f5bea;color:#fff}
+    .hidden{display:none!important}
+    .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{border:1px solid #e1e4e8;padding:9px;text-align:left;font-size:14px}
+    th{background:#f2f3f5}
+    .small{font-size:13px;color:#666}
+    .badge{display:inline-block;background:#eef2ff;color:#2f5bea;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}
+    .ok{color:#188038;font-weight:700}
+    .bad{color:#b3261e;font-weight:700}
+    .row{display:flex;gap:8px;align-items:center}
+    .row > *{flex:1}
+    #stickerPrintArea{display:none}
+    .sticker{width:95mm;min-height:70mm;border:2px solid #111;padding:10px;background:#fff;color:#111;font-size:13px}
+    .sticker .logo{font-size:24px;font-weight:900;color:#b3261e;text-align:center}
+    .sticker h2{text-align:center;margin:4px 0;font-size:18px}
+    .sticker .line{border-top:1px solid #111;margin:6px 0}
+    @media(max-width:760px){.tabs,.grid,.grid3{grid-template-columns:1fr}.wrap{padding:10px}}
+    @media print{
+      body *{visibility:hidden}
+      #stickerPrintArea,#stickerPrintArea *{visibility:visible}
+      #stickerPrintArea{display:block;position:absolute;left:0;top:0}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Ceradrive Dispatch QC V3</h1>
+      <div class="small">Order → Packing → QC → Sticker Print</div>
+    </div>
+
+    <div id="loginPage" class="card">
+      <h2>Login</h2>
+      <input id="loginUser" placeholder="Username" />
+      <input id="loginPass" type="password" placeholder="Password" />
+      <button class="blue" onclick="login()">Login</button>
+      <div class="small">Default: admin/Admin123, packing/Pack123, qc/Qc123</div>
+    </div>
+
+    <div id="appPage" class="hidden">
+      <div class="card">
+        <div class="row">
+          <div>
+            <h2 id="welcome">Welcome</h2>
+            <div id="roleText" class="small"></div>
+          </div>
+          <button class="red" onclick="logout()">Logout</button>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button id="tabDashboard" onclick="showTab('dashboard')">Dashboard</button>
+        <button id="tabOrders" onclick="showTab('orders')">Orders</button>
+        <button id="tabPacking" onclick="showTab('packing')">Packing</button>
+        <button id="tabQC" onclick="showTab('qc')">QC</button>
+        <button id="tabSku" onclick="showTab('sku')">SKU Master</button>
+      </div>
+
+      <div id="dashboardTab" class="card">
+        <h2>Dashboard</h2>
+        <div id="dashboardData">Loading...</div>
+      </div>
+
+      <div id="ordersTab" class="card hidden">
+        <h2>Admin Order Entry</h2>
+        <input id="orderParty" placeholder="Party Name" />
+        <div class="grid">
+          <input id="orderSkuSearch" placeholder="Search Part / Model then Enter" />
+          <input id="orderQty" type="number" placeholder="Qty then Enter" />
+        </div>
+        <div id="orderSelectedSku" class="small"></div>
+        <div id="orderItemsTable"></div>
+        <button class="green" onclick="saveOrder()">Save Order</button>
+        <h3>Orders</h3>
+        <div id="ordersList">Loading...</div>
+      </div>
+
+      <div id="packingTab" class="card hidden">
+        <h2>Packing Entry</h2>
+        <select id="packOrder" onchange="loadOrderForPacking()"></select>
+        <div class="grid3">
+          <input id="outerWeight" type="number" step="0.01" placeholder="Outer Carton Weight kg" />
+          <input id="cartonNo" placeholder="Carton No" />
+          <input id="totalCartons" placeholder="Total Cartons" />
+        </div>
+        <div class="grid">
+          <input id="packItemSearch" placeholder="Search order item then Enter" />
+          <input id="packQty" type="number" placeholder="Qty then Enter" />
+        </div>
+        <div id="packSelectedItem" class="small"></div>
+        <div id="packItemsTable"></div>
+        <div id="packWeight" class="card small"></div>
+        <button class="green" onclick="saveCarton()">Save Carton / Send to QC</button>
+      </div>
+
+      <div id="qcTab" class="card hidden">
+        <h2>QC / Recheck</h2>
+        <select id="qcCarton" onchange="loadCartonForQC()"></select>
+        <div id="qcDetails"></div>
+        <input id="actualWeight" type="number" step="0.01" placeholder="Actual Weight kg" />
+        <div class="grid">
+          <button class="green" onclick="saveQC('PASS')">PASS</button>
+          <button class="red" onclick="saveQC('RECHECK')">RECHECK</button>
+        </div>
+        <label class="small"><input id="showLogo" type="checkbox" checked style="width:auto"> Show Ceradrive Logo on Sticker</label>
+        <button class="blue" onclick="printSticker()">Print Sticker</button>
+        <div id="stickerPreview"></div>
+      </div>
+
+      <div id="skuTab" class="card hidden">
+        <h2>SKU Master Admin</h2>
+        <div class="grid">
+          <input id="skuPart" placeholder="Part No e.g. 101S" />
+          <input id="skuMake" placeholder="Make e.g. TATA" />
+        </div>
+        <div class="grid">
+          <input id="skuModel" placeholder="Model / Item Name e.g. SUMO" />
+          <input id="skuWeight" type="number" step="0.01" placeholder="Weight per set kg" />
+        </div>
+        <button class="green" onclick="saveSku()">Add / Update SKU</button>
+        <input id="skuFind" placeholder="Search SKU Master" oninput="loadSkuList()" />
+        <div id="skuList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="stickerPrintArea"></div>
+  <script src="app.js"></script>
+</body>
+</html>
