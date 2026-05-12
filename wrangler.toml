@@ -4,3 +4,4 @@ compatibility_date = "2026-05-12"
 [[d1_databases]]
 binding = "DB"
 database_name = "packing-qc-db"
+database_id = "5f86ae97-be63-41f7-9483-dadb3041cdf4"
