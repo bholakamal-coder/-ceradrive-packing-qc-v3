@@ -158,26 +158,6 @@ function renderDashboard() {
   `);
 }
 
-function renderOrders() {
-  state.orderItems = state.orderItems || [];
-  main(`
-    <div class="card">
-      <h2>Admin Order Entry</h2>
-      <input id="party" placeholder="Party Name">
-      <div class="row">
-        <div class="searchBox">
-          <input id="orderSearch" placeholder="Search Part / Model then Enter" oninput="showSkuSuggest('orderSearch','orderSuggest')" onkeydown="orderSearchKey(event)">
-          <div id="orderSuggest" class="suggest"></div>
-        </div>
-        <input id="orderQty" placeholder="Qty then Enter" type="number" onkeydown="if(event.key==='Enter') addOrderItem()">
-      </div>
-      ${itemsTable(state.orderItems, true)}
-      <button class="green" onclick="saveOrder()">Save Order</button>
-      <h3>Orders</h3>
-      ${state.orders.map(o => `<div class="line">#${o.id} — <b>${o.party_name}</b> — ${o.status || ""}</div>`).join("") || "No orders"}
-    </div>
-  `);
-}
 
 let tempSku = null;
 
