@@ -181,6 +181,7 @@ function renderOrders() {
 
     </div>
   `);
+  }
 function main(html) {
   document.getElementById("main").innerHTML = html;
 }
