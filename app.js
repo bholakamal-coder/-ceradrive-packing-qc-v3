@@ -185,7 +185,15 @@ function renderOrders() {
       <input id="party" placeholder="Party Name">
 
       <div class="row4">
-        <input id="part" placeholder="Part No">
+        <div class="searchBox">
+  <input
+    id="part"
+    placeholder="Search Part / Model"
+    autocomplete="off"
+    oninput="showSkuSuggest()"
+  >
+  <div id="skuSuggest" class="suggest"></div>
+</div>
         <input id="item" placeholder="Vehicle / Item">
         <input id="qty" type="number" placeholder="Qty">
         <input id="weight" type="number" step="0.01" placeholder="Weight / Set kg">
@@ -203,7 +211,103 @@ function renderOrders() {
     </div>
   `);
 }
+function showSkuSuggest() {
 
+  const q =
+    val("part")
+    .toLowerCase()
+    .trim();
+
+  const box =
+    document.getElementById(
+      "skuSuggest"
+    );
+
+  if (!box) return;
+
+  if (!q) {
+    box.innerHTML = "";
+    return;
+  }
+
+  const list =
+    state.skus.filter(s =>
+
+      String(
+        s.part_no ||
+        s.part ||
+        ""
+      )
+      .toLowerCase()
+      .includes(q)
+
+      ||
+
+      String(
+        s.model ||
+        s.item ||
+        ""
+      )
+      .toLowerCase()
+      .includes(q)
+
+    ).slice(0, 10);
+
+  box.innerHTML =
+    list.map((s, i) => `
+
+      <div onclick="selectSku(${i})">
+
+        <b>
+          ${s.part_no || s.part}
+        </b>
+
+        —
+        ${s.model || s.item || ""}
+
+      </div>
+
+    `).join("");
+
+  window.skuSuggestionList = list;
+}
+
+function selectSku(i) {
+
+  const s =
+    window.skuSuggestionList[i];
+
+  if (!s) return;
+
+  document.getElementById(
+    "part"
+  ).value =
+    s.part_no ||
+    s.part ||
+    "";
+
+  document.getElementById(
+    "item"
+  ).value =
+    s.model ||
+    s.item ||
+    "";
+
+  document.getElementById(
+    "weight"
+  ).value =
+    s.weight ||
+    s.weight_per_set ||
+    "";
+
+  document.getElementById(
+    "skuSuggest"
+  ).innerHTML = "";
+
+  document.getElementById(
+    "qty"
+  ).focus();
+}
 function addOrderItem() {
   const item = {
     part_no: val("part"),
@@ -979,7 +1083,34 @@ function injectStyle() {
       #sticker,#sticker *{visibility:visible}
       #sticker{position:absolute;left:0;top:0}
     }
+.searchBox{
+position:relative;
+}
 
+.suggest{
+position:absolute;
+top:100%;
+left:0;
+right:0;
+background:white;
+border:1px solid #ddd;
+border-radius:12px;
+max-height:220px;
+overflow:auto;
+z-index:999;
+margin-top:4px;
+}
+
+.suggestItem{
+padding:10px;
+cursor:pointer;
+border-bottom:1px solid #f1f1f1;
+color:#111;
+}
+
+.suggestItem:hover{
+background:#f5f7ff;
+}
     @media(max-width:800px){
       .row,.row3,.row4,.tabs,.grid4{
         grid-template-columns:1fr;
