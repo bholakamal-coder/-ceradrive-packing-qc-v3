@@ -4,7 +4,8 @@ const API = {
 
 let state = {
   user: JSON.parse(localStorage.getItem("user") || "null"),
-  tab: "dashboard"
+  tatab: "dashboard",
+orders: []
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -191,7 +192,88 @@ function renderDashboard() {
 }
 
 function renderOrders() {
+function saveOrderLocally() {
 
+  const order = {
+
+    party: val("party"),
+
+    part: val("part"),
+
+    item: val("item"),
+
+    qty: Number(val("qty"))
+  };
+
+  if (
+    !order.party ||
+    !order.part ||
+    !order.item ||
+    !order.qty
+  ) {
+    alert("Fill all fields");
+    return;
+  }
+
+  state.orders.push(order);
+
+  renderOrdersList();
+
+  document.getElementById("party").value = "";
+  document.getElementById("part").value = "";
+  document.getElementById("item").value = "";
+  document.getElementById("qty").value = "";
+}
+
+function renderOrdersList() {
+
+  const box =
+    document.getElementById("ordersList");
+
+  if (!box) return;
+
+  if (!state.orders.length) {
+
+    box.innerHTML = `
+      <p>No orders added.</p>
+    `;
+
+    return;
+  }
+
+  box.innerHTML = state.orders.map((o, i) => `
+    <div class="card">
+
+      <b>${o.party}</b>
+
+      <br>
+
+      ${o.part}
+
+      <br>
+
+      ${o.item}
+
+      <br>
+
+      Qty: ${o.qty}
+
+      <br><br>
+
+      <button onclick="deleteOrder(${i})">
+        Delete
+      </button>
+
+    </div>
+  `).join("");
+}
+
+function deleteOrder(i) {
+
+  state.orders.splice(i, 1);
+
+  renderOrdersList();
+}
   main(`
     <div class="card">
 
@@ -199,12 +281,37 @@ function renderOrders() {
         Orders
       </h2>
 
-      <p>
-        Orders module ready.
-      </p>
+      <input
+        id="party"
+        placeholder="Party Name"
+      >
+
+      <input
+        id="part"
+        placeholder="Part Number"
+      >
+
+      <input
+        id="item"
+        placeholder="Vehicle / Item"
+      >
+
+      <input
+        id="qty"
+        type="number"
+        placeholder="Qty"
+      >
+
+      <button onclick="saveOrderLocally()">
+        Add Order
+      </button>
+
+      <div id="ordersList"></div>
 
     </div>
   `);
+
+  renderOrdersList();
 }
 
 function main(html) {
