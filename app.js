@@ -575,9 +575,25 @@ async function selectOrder(id) {
 
   try {
     const data = await api(API.orders + "?id=" + id);
-    state.selectedOrder = data.order || state.orders.find(o => String(o.id) === String(id));
-    state.selectedOrder.items = data.items || state.selectedOrder.items || [];
+
+    state.selectedOrder =
+      data.order ||
+      state.orders.find(o => String(o.id) === String(id));
+
+    state.selectedOrder.items =
+      data.items || state.selectedOrder.items || [];
+
     state.cartonItems = [];
+
+    const sameOrderCartons = state.cartons.filter(c =>
+      String(c.order_id) === String(state.selectedOrder.id)
+    );
+
+    const nextCartonNo = sameOrderCartons.length + 1;
+
+    state.cartonNo = String(nextCartonNo);
+    state.totalCartons = String(nextCartonNo);
+
     renderPacking();
 
   } catch (e) {
