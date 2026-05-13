@@ -43,7 +43,6 @@ async function api(url, opts = {}) {
 
   const text = await res.text();
   let data = {};
-
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
@@ -75,7 +74,6 @@ function dedupeSkus(list) {
     const key = `${part}|${model}`.toLowerCase();
 
     if (!part || seen.has(key)) return false;
-
     seen.add(key);
     return true;
   });
@@ -230,9 +228,15 @@ function renderOrders() {
         <div class="line">
           <b>#${o.id} — ${o.party_name}</b><br>
           Status: ${o.status || "PENDING"}<br>
-          <button class="danger" onclick="deleteOrder(${o.id})">Delete Order</button>
+
+          <div class="row">
+            <button onclick="viewOrder(${o.id})">View Order</button>
+            <button class="danger" onclick="deleteOrder(${o.id})">Delete Order</button>
+          </div>
         </div>
       `).join("") || "No orders"}
+
+      <div id="orderViewBox"></div>
     </div>
   `);
 }
@@ -364,6 +368,51 @@ async function saveOrder() {
 
   } catch (e) {
     alert("Save order failed: " + e.message);
+  }
+}
+
+async function viewOrder(id) {
+  try {
+    const data = await api(API.orders + "?id=" + id);
+    const order = data.order || {};
+    const items = data.items || order.items || [];
+
+    document.getElementById("orderViewBox").innerHTML = `
+      <div class="info">
+        <h3>Order View</h3>
+        <b>Party:</b> ${order.party_name || ""}<br>
+        <b>Order No:</b> ${order.id || id}<br>
+        <b>Status:</b> ${order.status || "PENDING"}
+
+        <table>
+          <tr>
+            <th>Part</th>
+            <th>Item</th>
+            <th>Order Qty</th>
+            <th>Packed Qty</th>
+            <th>Balance</th>
+          </tr>
+
+          ${items.map(it => {
+            const packed = Number(it.packed_qty || 0);
+            const qty = Number(it.qty || 0);
+            const balance = qty - packed;
+
+            return `
+              <tr>
+                <td>${it.part_no || ""}</td>
+                <td>${it.model || it.model_name || ""}</td>
+                <td>${qty}</td>
+                <td>${packed}</td>
+                <td><b>${balance}</b></td>
+              </tr>
+            `;
+          }).join("")}
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    alert("View order failed: " + e.message);
   }
 }
 
@@ -762,10 +811,6 @@ function deleteItem(i) {
 
 function val(id) {
   return document.getElementById(id)?.value || "";
-}
-
-function valSafe(id) {
-  return document.getElementById(id)?.value || 0;
 }
 
 function main(html) {
