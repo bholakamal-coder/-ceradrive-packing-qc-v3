@@ -3,7 +3,8 @@ const API = {
 };
 
 let state = {
-  user: JSON.parse(localStorage.getItem("user") || "null")
+  user: JSON.parse(localStorage.getItem("user") || "null"),
+  tab: "dashboard"
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -20,6 +21,7 @@ function init() {
 }
 
 async function api(url, opts = {}) {
+
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json"
@@ -37,10 +39,15 @@ async function api(url, opts = {}) {
 }
 
 function renderLogin() {
+
   document.body.innerHTML = `
     <div class="wrap">
+
       <div class="card">
-        <h1>Ceradrive Dispatch QC</h1>
+
+        <h1>
+          Ceradrive Dispatch QC
+        </h1>
 
         <input
           id="u"
@@ -58,16 +65,20 @@ function renderLogin() {
         <button onclick="login()">
           Login
         </button>
+
       </div>
+
     </div>
   `;
 }
 
 async function login() {
+
   try {
 
     const data = await api(API.login, {
       method: "POST",
+
       body: JSON.stringify({
         username: val("u"),
         password: val("p")
@@ -91,6 +102,15 @@ async function login() {
   }
 }
 
+function logout() {
+
+  localStorage.removeItem("user");
+
+  state.user = null;
+
+  renderLogin();
+}
+
 function renderApp() {
 
   document.body.innerHTML = `
@@ -99,6 +119,7 @@ function renderApp() {
       <div class="card top">
 
         <div>
+
           <h2>
             Ceradrive Packing QC V3
           </h2>
@@ -106,6 +127,7 @@ function renderApp() {
           <p>
             Welcome ${state.user.username}
           </p>
+
         </div>
 
         <button onclick="logout()">
@@ -132,7 +154,9 @@ function renderApp() {
   `;
 
   renderTab();
-}function setTab(tab) {
+}
+
+function setTab(tab) {
 
   state.tab = tab;
 
@@ -181,11 +205,15 @@ function renderOrders() {
 
     </div>
   `);
-  }
+}
+
 function main(html) {
+
   document.getElementById("main").innerHTML = html;
 }
+
 function val(id) {
+
   return document.getElementById(id)?.value || "";
 }
 
@@ -202,7 +230,7 @@ function injectStyle() {
     }
 
     .wrap{
-      max-width:500px;
+      max-width:700px;
       margin:auto;
       padding:40px;
     }
@@ -212,15 +240,24 @@ function injectStyle() {
       padding:25px;
       border-radius:14px;
       box-shadow:0 2px 10px #0001;
+      margin-bottom:20px;
     }
 
-    input,button{
+    .top{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+    }
+
+    input,
+    button{
       width:100%;
       padding:14px;
       margin:10px 0;
       border-radius:10px;
       border:1px solid #ccc;
       font-size:16px;
+      box-sizing:border-box;
     }
 
     button{
@@ -228,6 +265,14 @@ function injectStyle() {
       color:white;
       border:none;
       font-weight:bold;
+      cursor:pointer;
+    }
+
+    .tabs{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+      margin:15px 0;
     }
   `;
 
