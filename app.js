@@ -4,13 +4,14 @@ const API = {
 
 let state = {
   user: JSON.parse(localStorage.getItem("user") || "null"),
-  tatab: "dashboard",
-orders: []
+  tab: "dashboard",
+  orders: JSON.parse(localStorage.getItem("orders") || "[]")
 };
 
 document.addEventListener("DOMContentLoaded", init);
 
 function init() {
+
   injectStyle();
 
   if (!state.user) {
@@ -39,6 +40,8 @@ async function api(url, opts = {}) {
   return data;
 }
 
+/* LOGIN */
+
 function renderLogin() {
 
   document.body.innerHTML = `
@@ -47,7 +50,7 @@ function renderLogin() {
       <div class="card">
 
         <h1>
-          Ceradrive Dispatch QC
+          Ceradrive Packing QC V3
         </h1>
 
         <input
@@ -79,7 +82,6 @@ async function login() {
 
     const data = await api(API.login, {
       method: "POST",
-
       body: JSON.stringify({
         username: val("u"),
         password: val("p")
@@ -111,6 +113,8 @@ function logout() {
 
   renderLogin();
 }
+
+/* APP */
 
 function renderApp() {
 
@@ -147,6 +151,10 @@ function renderApp() {
           Orders
         </button>
 
+        <button onclick="setTab('packing')">
+          Packing
+        </button>
+
       </div>
 
       <div id="main"></div>
@@ -171,8 +179,15 @@ function renderTab() {
     return;
   }
 
+  if (state.tab === "packing") {
+    renderPacking();
+    return;
+  }
+
   renderDashboard();
 }
+
+/* DASHBOARD */
 
 function renderDashboard() {
 
@@ -187,23 +202,53 @@ function renderDashboard() {
         App working properly.
       </p>
 
+      <p>
+        Total Orders:
+        <b>${state.orders.length}</b>
+      </p>
+
     </div>
   `);
 }
 
+/* ORDERS */
+
 function renderOrders() {
+
   main(`
     <div class="card">
-      <h2>Orders</h2>
 
-      <input id="party" placeholder="Party Name">
-      <input id="part" placeholder="Part Number">
-      <input id="item" placeholder="Vehicle / Item">
-      <input id="qty" type="number" placeholder="Qty">
+      <h2>
+        Orders
+      </h2>
 
-      <button onclick="saveOrderLocally()">Add Order</button>
+      <input
+        id="party"
+        placeholder="Party Name"
+      >
+
+      <input
+        id="part"
+        placeholder="Part Number"
+      >
+
+      <input
+        id="item"
+        placeholder="Vehicle / Item"
+      >
+
+      <input
+        id="qty"
+        type="number"
+        placeholder="Qty"
+      >
+
+      <button onclick="saveOrderLocally()">
+        Add Order
+      </button>
 
       <div id="ordersList"></div>
+
     </div>
   `);
 
@@ -211,19 +256,40 @@ function renderOrders() {
 }
 
 function saveOrderLocally() {
+
   const order = {
+
+    id: Date.now(),
+
     party: val("party"),
+
     part: val("part"),
+
     item: val("item"),
+
     qty: Number(val("qty"))
+
   };
 
-  if (!order.party || !order.part || !order.item || !order.qty) {
+  if (
+    !order.party ||
+    !order.part ||
+    !order.item ||
+    !order.qty
+  ) {
+
     alert("Fill all fields");
+
     return;
   }
 
   state.orders.push(order);
+
+  localStorage.setItem(
+    "orders",
+    JSON.stringify(state.orders)
+  );
+
   renderOrdersList();
 
   document.getElementById("party").value = "";
@@ -233,39 +299,86 @@ function saveOrderLocally() {
 }
 
 function renderOrdersList() {
-  const box = document.getElementById("ordersList");
+
+  const box =
+    document.getElementById("ordersList");
+
   if (!box) return;
 
   if (!state.orders.length) {
-    box.innerHTML = `<p>No orders added.</p>`;
+
+    box.innerHTML = `
+      <p>
+        No orders added.
+      </p>
+    `;
+
     return;
   }
 
-  box.innerHTML = state.orders.map((o, i) => `
-    <div class="card">
-      <b>${o.party}</b><br>
-      ${o.part}<br>
-      ${o.item}<br>
-      Qty: ${o.qty}<br><br>
-      <button onclick="deleteOrder(${i})">Delete</button>
+  box.innerHTML = state.orders.map(o => `
+    <div class="line">
+
+      <b>
+        ${o.party}
+      </b>
+
+      <br>
+
+      ${o.part}
+      —
+      ${o.item}
+
+      <br>
+
+      Qty:
+      ${o.qty}
+
     </div>
   `).join("");
 }
 
-function deleteOrder(i) {
-  state.orders.splice(i, 1);
-  renderOrdersList();
+/* PACKING */
+
+function renderPacking() {
+
+  main(`
+    <div class="card">
+
+      <h2>
+        Packing
+      </h2>
+
+      <p>
+        Packing module ready.
+      </p>
+
+      <p>
+        Next step:
+        carton system + QC.
+      </p>
+
+    </div>
+  `);
 }
+
+/* HELPERS */
 
 function main(html) {
 
-  document.getElementById("main").innerHTML = html;
+  document.getElementById(
+    "main"
+  ).innerHTML = html;
 }
 
 function val(id) {
 
-  return document.getElementById(id)?.value || "";
+  return (
+    document.getElementById(id)?.value || ""
+  );
 }
+
+/* STYLE */
 
 function injectStyle() {
 
@@ -273,22 +386,24 @@ function injectStyle() {
     document.createElement("style");
 
   style.innerHTML = `
+
     body{
       font-family:Arial;
       background:#f4f6f8;
       margin:0;
+      color:#111;
     }
 
     .wrap{
       max-width:700px;
       margin:auto;
-      padding:40px;
+      padding:40px 20px;
     }
 
     .card{
       background:white;
-      padding:25px;
-      border-radius:14px;
+      padding:24px;
+      border-radius:16px;
       box-shadow:0 2px 10px #0001;
       margin-bottom:20px;
     }
@@ -297,6 +412,7 @@ function injectStyle() {
       display:flex;
       justify-content:space-between;
       align-items:center;
+      gap:20px;
     }
 
     input,
@@ -320,10 +436,25 @@ function injectStyle() {
 
     .tabs{
       display:grid;
-      grid-template-columns:1fr 1fr;
+      grid-template-columns:1fr 1fr 1fr;
       gap:10px;
-      margin:15px 0;
+      margin-bottom:20px;
     }
+
+    .tabs button{
+      background:white;
+      color:#111;
+      border:1px solid #ddd;
+    }
+
+    .line{
+      padding:14px;
+      border:1px solid #ddd;
+      border-radius:10px;
+      margin-top:10px;
+      background:#fafafa;
+    }
+
   `;
 
   document.head.appendChild(style);
