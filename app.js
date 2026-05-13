@@ -672,16 +672,15 @@ function addCartonItem() {
     return alert(`Qty exceeds balance. Balance: ${balance - already}`);
   }
 
-  state.cartonItems.push({
-    part_no: item.part_no,
-    model: item.model || item.model_name || "",
-    make_name: item.make_name || "",
-    qty,
-    weight_per_set: Number(item.weight_per_set || 0)
-  });
-
-  renderPacking();
-}
+state.cartonItems.push({
+  carton_no: state.cartonNo,
+  total_cartons: state.totalCartons,
+  part_no: item.part_no,
+  model: item.model || item.model_name || "",
+  make_name: item.make_name || "",
+  qty,
+  weight_per_set: Number(item.weight_per_set || 0)
+});
 
 function cartonItemWeight() {
   return state.cartonItems.reduce((sum, it) => {
@@ -885,6 +884,8 @@ function itemsTable(items, del) {
   return `
     <table>
       <tr>
+        <th>Carton No</th>
+        <th>Total</th>
         <th>Part</th>
         <th>Item</th>
         <th>Qty</th>
@@ -893,6 +894,8 @@ function itemsTable(items, del) {
 
       ${(items || []).map((it, i) => `
         <tr>
+          <td>${it.carton_no || state.cartonNo || ""}</td>
+          <td>${it.total_cartons || state.totalCartons || ""}</td>
           <td>${it.part_no || ""}</td>
           <td>${it.model || it.model_name || ""}</td>
           <td>${it.qty || ""}</td>
