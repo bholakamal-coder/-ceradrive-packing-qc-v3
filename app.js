@@ -19,6 +19,8 @@ let state = {
   logoOn: true
 };
 
+let tempSku = null;
+
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
@@ -33,26 +35,30 @@ async function api(url, opts = {}) {
     headers: { "Content-Type": "application/json" },
     ...opts
   });
+
   const text = await res.text();
   let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: text };
+  }
+
   if (!res.ok) throw new Error(data.error || "API error");
   return data;
 }
 
 async function loadAll() {
-  try {
-    const [o, c, s] = await Promise.all([
-      api(API.orders).catch(() => ({ orders: [] })),
-      api(API.cartons).catch(() => ({ cartons: [] })),
-      api(API.sku).catch(() => ({ skus: [] }))
-    ]);
-    state.orders = o.orders || [];
-    state.cartons = c.cartons || [];
-    state.skus = s.skus || s.items || [];
-  } catch (e) {
-    alert(e.message);
-  }
+  const [o, c, s] = await Promise.all([
+    api(API.orders).catch(() => ({ orders: [] })),
+    api(API.cartons).catch(() => ({ cartons: [] })),
+    api(API.sku + "?q=").catch(() => ({ skus: [] }))
+  ]);
+
+  state.orders = o.orders || [];
+  state.cartons = c.cartons || [];
+  state.skus = s.skus || s.items || [];
 }
 
 function renderLogin() {
@@ -61,13 +67,16 @@ function renderLogin() {
       <div class="card">
         <h1>Ceradrive Dispatch QC V3</h1>
         <p>Order → Packing → QC → Sticker Print</p>
+
         <h2>Login</h2>
         <input id="u" placeholder="Username" value="admin">
         <input id="p" placeholder="Password" type="password" value="Admin123">
         <button onclick="login()">Login</button>
+
         <small>admin/Admin123, packing/Pack123, qc/Qc123</small>
       </div>
-    </div>`;
+    </div>
+  `;
 }
 
 async function login() {
@@ -79,10 +88,12 @@ async function login() {
         password: val("p")
       })
     });
+
     state.user = data.user;
     localStorage.setItem("user", JSON.stringify(data.user));
     await loadAll();
     renderApp();
+
   } catch (e) {
     alert("Login failed: " + e.message);
   }
@@ -111,20 +122,22 @@ function renderApp() {
       </div>
 
       <div class="tabs">
-        ${tabBtn("dashboard","Dashboard")}
-        ${tabBtn("orders","Orders")}
-        ${tabBtn("packing","Packing")}
-        ${tabBtn("qc","QC")}
-        ${tabBtn("sku","SKU Master")}
+        ${tabBtn("dashboard", "Dashboard")}
+        ${tabBtn("orders", "Orders")}
+        ${tabBtn("packing", "Packing")}
+        ${tabBtn("qc", "QC")}
+        ${tabBtn("sku", "SKU Master")}
       </div>
 
       <div id="main"></div>
-    </div>`;
+    </div>
+  `;
+
   renderTab();
 }
 
 function tabBtn(id, label) {
-  return `<button class="${state.tab===id?'active':''}" onclick="setTab('${id}')">${label}</button>`;
+  return `<button class="${state.tab === id ? "active" : ""}" onclick="setTab('${id}')">${label}</button>`;
 }
 
 function setTab(t) {
@@ -158,20 +171,71 @@ function renderDashboard() {
   `);
 }
 
+/* ================= ORDERS ================= */
 
-let tempSku = null;
+function renderOrders() {
+  main(`
+    <div class="card">
+      <h2>Admin Order Entry</h2>
 
-function showSkuSuggest(inputId, boxId) {
+      <input id="party" placeholder="Party Name">
+
+      <div class="row">
+        <div class="searchBox">
+          <input id="orderSearch"
+            placeholder="Search Part / Model"
+            oninput="showSkuSuggest('orderSearch','orderSuggest')"
+            onkeydown="orderSearchKey(event)">
+          <div id="orderSuggest" class="suggest"></div>
+        </div>
+
+        <input id="orderQty"
+          placeholder="Qty then Enter"
+          type="number"
+          onkeydown="if(event.key==='Enter') addOrderItem()">
+      </div>
+
+      ${itemsTable(state.orderItems, true)}
+
+      <button class="green" onclick="saveOrder()">Save Order</button>
+
+      <h3>Saved Orders</h3>
+
+      ${state.orders.map(o => `
+        <div class="line">
+          <b>#${o.id} — ${o.party_name}</b><br>
+          Status: ${o.status || "PENDING"}<br>
+          <button class="danger" onclick="deleteOrder(${o.id})">Delete Order</button>
+        </div>
+      `).join("") || "No orders"}
+    </div>
+  `);
+}
+
+async function showSkuSuggest(inputId, boxId) {
   const q = val(inputId).toLowerCase().trim();
   const box = document.getElementById(boxId);
-  if (!q) return box.innerHTML = "";
-  const list = state.skus.filter(s =>
+
+  if (!q) {
+    box.innerHTML = "";
+    return;
+  }
+
+  let list = state.skus.filter(s =>
     String(s.part_no || s.part || "").toLowerCase().includes(q) ||
-    String(s.model || s.model_name || s.item || "").toLowerCase().includes(q)
+    String(s.model || s.model_name || s.item || "").toLowerCase().includes(q) ||
+    String(s.make_name || "").toLowerCase().includes(q)
   ).slice(0, 10);
 
+  if (!list.length) {
+    try {
+      const d = await api(API.sku + "?q=" + encodeURIComponent(q));
+      list = (d.skus || d.items || []).slice(0, 10);
+    } catch {}
+  }
+
   box.innerHTML = list.map(s => `
-    <div onclick='selectSku(${JSON.stringify(s)})'>
+    <div onclick='selectSku(${JSON.stringify(s).replace(/'/g, "&apos;")})'>
       <b>${s.part_no || s.part}</b> — ${s.model || s.model_name || s.item || ""}
     </div>
   `).join("");
@@ -179,61 +243,128 @@ function showSkuSuggest(inputId, boxId) {
 
 function selectSku(s) {
   tempSku = s;
+
+  const input = document.getElementById("orderSearch");
+  if (input) {
+    input.value = `${s.part_no || s.part} - ${s.model || s.model_name || s.item || ""}`;
+  }
+
   document.querySelectorAll(".suggest").forEach(x => x.innerHTML = "");
+
+  const qty = document.getElementById("orderQty");
+  if (qty) qty.focus();
 }
 
-function orderSearchKey(e) {
+async function orderSearchKey(e) {
   if (e.key !== "Enter") return;
-  const q = val("orderSearch").toLowerCase();
+
+  e.preventDefault();
+
+  const q = val("orderSearch").toLowerCase().trim();
+
   tempSku = state.skus.find(s =>
     String(s.part_no || s.part || "").toLowerCase().includes(q) ||
     String(s.model || s.model_name || s.item || "").toLowerCase().includes(q)
   );
-  document.getElementById("orderQty").focus();
+
+  if (!tempSku) {
+    try {
+      const d = await api(API.sku + "?q=" + encodeURIComponent(q));
+      tempSku = (d.skus || d.items || [])[0];
+    } catch {}
+  }
+
+  if (!tempSku) {
+    alert("Part not found");
+    return;
+  }
+
+  selectSku(tempSku);
 }
 
 function addOrderItem() {
   if (!tempSku) return alert("Select item first");
+
   const qty = Number(val("orderQty"));
-  if (!qty) return alert("Enter qty");
+  if (!qty || qty <= 0) return alert("Enter qty");
 
   state.orderItems.push({
     part_no: tempSku.part_no || tempSku.part,
     model: tempSku.model || tempSku.model_name || tempSku.item || "",
+    make_name: tempSku.make_name || "",
     qty,
     weight_per_set: Number(tempSku.weight_per_set || tempSku.weight || 0)
   });
 
+  tempSku = null;
   renderOrders();
+
+  setTimeout(() => {
+    const search = document.getElementById("orderSearch");
+    if (search) search.focus();
+  }, 50);
 }
 
 async function saveOrder() {
   try {
+    const party = val("party").trim();
+
+    if (!party) return alert("Party name required");
+    if (!state.orderItems.length) return alert("Add at least one item");
+
     await api(API.orders, {
       method: "POST",
       body: JSON.stringify({
-        party_name: val("party"),
+        party_name: party,
         created_by: state.user.username,
         items: state.orderItems
       })
     });
+
+    alert("Order saved");
+
     state.orderItems = [];
     await loadAll();
     renderOrders();
+
   } catch (e) {
     alert("Save order failed: " + e.message);
   }
 }
 
+async function deleteOrder(id) {
+  if (!confirm("Delete this order?")) return;
+
+  try {
+    await api(API.orders + "?id=" + id, {
+      method: "DELETE"
+    });
+
+    await loadAll();
+    renderOrders();
+
+  } catch (e) {
+    alert("Delete failed: " + e.message);
+  }
+}
+
+/* ================= PACKING ================= */
+
 function renderPacking() {
-  const orderOptions = state.orders.map(o => `<option value="${o.id}">#${o.id} — ${o.party_name}</option>`).join("");
+  const orderOptions = state.orders.map(o => `
+    <option value="${o.id}">
+      #${o.id} — ${o.party_name}
+    </option>
+  `).join("");
+
   const o = state.selectedOrder;
 
   main(`
     <div class="card">
       <h2>Packing Entry</h2>
+
       <select onchange="selectOrder(this.value)">
-        <option>Select Party / Order</option>
+        <option value="">Select Party / Order</option>
         ${orderOptions}
       </select>
 
@@ -245,7 +376,7 @@ function renderPacking() {
       ` : ""}
 
       <div class="row3">
-        <input id="outerWeight" placeholder="Outer Carton Weight kg" type="number" step="0.01">
+        <input id="outerWeight" placeholder="Outer Carton Weight kg" type="number" step="0.01" oninput="renderPacking()">
         <input id="cartonNo" placeholder="Carton No">
         <input id="totalCartons" placeholder="Total Cartons">
       </div>
@@ -266,34 +397,67 @@ function renderPacking() {
 }
 
 async function selectOrder(id) {
-  state.selectedOrder = state.orders.find(o => String(o.id) === String(id));
-  state.cartonItems = [];
-  renderPacking();
+  if (!id) return;
+
+  try {
+    const data = await api(API.orders + "?id=" + id);
+    state.selectedOrder = data.order || state.orders.find(o => String(o.id) === String(id));
+    state.selectedOrder.items = data.items || [];
+    state.cartonItems = [];
+    renderPacking();
+
+  } catch (e) {
+    alert("Order load failed: " + e.message);
+  }
 }
 
 function packingItemSelector(o) {
   const items = o.items || o.order_items || [];
+
   return `
     <h3>Order Items / Balance</h3>
+
     <table>
-      <tr><th>Part</th><th>Item</th><th>Order Qty</th><th>Packed</th><th>Balance</th></tr>
+      <tr>
+        <th>Part</th>
+        <th>Item</th>
+        <th>Order Qty</th>
+        <th>Packed</th>
+        <th>Balance</th>
+      </tr>
       ${items.map(it => {
         const packed = Number(it.packed_qty || 0);
         const bal = Number(it.qty || 0) - packed;
-        return `<tr><td>${it.part_no}</td><td>${it.model || it.model_name || ""}</td><td>${it.qty}</td><td>${packed}</td><td><b>${bal}</b></td></tr>`;
+        return `
+          <tr>
+            <td>${it.part_no}</td>
+            <td>${it.model || it.model_name || ""}</td>
+            <td>${it.qty}</td>
+            <td>${packed}</td>
+            <td><b>${bal}</b></td>
+          </tr>
+        `;
       }).join("")}
     </table>
 
     <div class="row">
       <select id="packItem">
-        <option>Select order item</option>
+        <option value="">Select order item</option>
         ${items.map(it => {
           const packed = Number(it.packed_qty || 0);
           const bal = Number(it.qty || 0) - packed;
-          return `<option value="${it.part_no}">${it.part_no} — ${it.model || it.model_name || ""} — Balance ${bal}</option>`;
+          return `
+            <option value="${it.part_no}">
+              ${it.part_no} — ${it.model || it.model_name || ""} — Balance ${bal}
+            </option>
+          `;
         }).join("")}
       </select>
-      <input id="packQty" placeholder="Qty then Enter" type="number" onkeydown="if(event.key==='Enter') addCartonItem()">
+
+      <input id="packQty"
+        placeholder="Qty then Enter"
+        type="number"
+        onkeydown="if(event.key==='Enter') addCartonItem()">
     </div>
   `;
 }
@@ -301,11 +465,15 @@ function packingItemSelector(o) {
 function addCartonItem() {
   const part = val("packItem");
   const qty = Number(val("packQty"));
+
   if (!state.selectedOrder || !part || !qty) return alert("Select item and qty");
 
   const item = (state.selectedOrder.items || state.selectedOrder.order_items || []).find(x => x.part_no === part);
+
   const balance = Number(item.qty || 0) - Number(item.packed_qty || 0);
-  const already = state.cartonItems.filter(x => x.part_no === part).reduce((a,b)=>a+Number(b.qty),0);
+  const already = state.cartonItems
+    .filter(x => x.part_no === part)
+    .reduce((a, b) => a + Number(b.qty), 0);
 
   if (qty + already > balance) {
     return alert(`Qty exceeds balance. Balance: ${balance - already}`);
@@ -314,6 +482,7 @@ function addCartonItem() {
   state.cartonItems.push({
     part_no: item.part_no,
     model: item.model || item.model_name || "",
+    make_name: item.make_name || "",
     qty,
     weight_per_set: Number(item.weight_per_set || 0)
   });
@@ -322,7 +491,9 @@ function addCartonItem() {
 }
 
 function cartonItemWeight() {
-  return state.cartonItems.reduce((sum, it) => sum + (Number(it.qty) * Number(it.weight_per_set || 0)), 0);
+  return state.cartonItems.reduce((sum, it) => {
+    return sum + (Number(it.qty) * Number(it.weight_per_set || 0));
+  }, 0);
 }
 
 function expectedWeight() {
@@ -331,6 +502,10 @@ function expectedWeight() {
 
 async function saveCarton() {
   try {
+    if (!state.selectedOrder) return alert("Select order");
+    if (!state.cartonItems.length) return alert("Add carton items");
+    if (!val("cartonNo")) return alert("Carton no required");
+
     await api(API.cartons, {
       method: "POST",
       body: JSON.stringify({
@@ -344,13 +519,19 @@ async function saveCarton() {
       })
     });
 
+    alert("Carton sent to QC");
+
     state.cartonItems = [];
     await loadAll();
+    state.selectedOrder = null;
     renderPacking();
+
   } catch (e) {
     alert("Carton save failed: " + e.message);
   }
 }
+
+/* ================= QC ================= */
 
 function renderQC() {
   const parties = [...new Set(state.cartons.map(c => c.party_name).filter(Boolean))];
@@ -360,8 +541,8 @@ function renderQC() {
       <h2>QC / Recheck</h2>
 
       <select id="qcParty" onchange="renderQCCartons(this.value)">
-        <option>Select Party</option>
-        ${parties.map(p => `<option>${p}</option>`).join("")}
+        <option value="">Select Party</option>
+        ${parties.map(p => `<option value="${p}">${p}</option>`).join("")}
       </select>
 
       <div id="qcCartons"></div>
@@ -372,15 +553,22 @@ function renderQC() {
 
 function renderQCCartons(party) {
   const list = state.cartons.filter(c => c.party_name === party);
+
   document.getElementById("qcCartons").innerHTML = `
     <select onchange="selectCarton(this.value)">
-      <option>Select Carton</option>
-      ${list.map(c => `<option value="${c.id}">${c.party_name} — Carton ${c.carton_no}/${c.total_cartons || ""} — ${c.status || c.qc_status}</option>`).join("")}
+      <option value="">Select Carton</option>
+      ${list.map(c => `
+        <option value="${c.id}">
+          ${c.party_name} — Carton ${c.carton_no}/${c.total_cartons || ""} — ${c.status || c.qc_status}
+        </option>
+      `).join("")}
     </select>
   `;
 }
 
 async function selectCarton(id) {
+  if (!id) return;
+
   const data = await api(`${API.cartons}?id=${id}`);
   state.selectedCarton = data.carton;
   renderQCDetails();
@@ -401,12 +589,25 @@ function renderQCDetails() {
 
     ${itemsTable(c.items || [], false)}
 
-    <input id="actualWeight" placeholder="Actual Weight kg" type="number" step="0.01" value="${c.actual_weight || ""}">
+    <input id="actualWeight"
+      placeholder="Actual Weight kg"
+      type="number"
+      step="0.01"
+      value="${c.actual_weight || ""}">
+
     <button class="green" onclick="saveQC()">Auto PASS / RECHECK</button>
 
-    <label><input type="checkbox" ${state.logoOn ? "checked" : ""} onchange="state.logoOn=this.checked; renderQCDetails()"> Show Ceradrive Logo on Sticker</label>
+    <label>
+      <input type="checkbox"
+        ${state.logoOn ? "checked" : ""}
+        onchange="state.logoOn=this.checked; renderQCDetails()">
+      Show Ceradrive Logo on Sticker
+    </label>
 
-    ${pass ? `<button onclick="printSticker()">Print Sticker</button>${stickerHTML(c)}` : `<p class="bad">Sticker only for QC PASS cartons</p>`}
+    ${pass
+      ? `<button onclick="printSticker()">Print Sticker</button>${stickerHTML(c)}`
+      : `<p class="bad">Sticker only for QC PASS cartons</p>`
+    }
   `;
 }
 
@@ -422,22 +623,28 @@ async function saveQC() {
 
     await loadAll();
     await selectCarton(state.selectedCarton.id);
+
     alert(`QC Status: ${data.status} | Difference: ${data.difference} kg`);
+
   } catch (e) {
     alert("QC failed: " + e.message);
   }
 }
 
 function stickerHTML(c) {
-  const totalQty = (c.items || []).reduce((a,b)=>a+Number(b.qty),0);
+  const totalQty = (c.items || []).reduce((a, b) => a + Number(b.qty), 0);
+
   return `
     <div id="sticker" class="sticker">
       ${state.logoOn ? `<h2>CERADRIVE</h2>` : ""}
       <h3>${c.party_name}</h3>
       <hr>
+
       <b>Carton No:</b> ${c.carton_no}/${c.total_cartons || ""}<br>
+
       <b>Items:</b><br>
       ${(c.items || []).map(i => `${i.part_no} ${i.model || ""} — ${i.qty}`).join("<br>")}<br>
+
       <b>Total Qty:</b> ${totalQty}<br>
       <b>Expected Weight:</b> ${Number(c.expected_weight || 0).toFixed(2)} kg<br>
       <b>Actual Weight:</b> ${Number(c.actual_weight || 0).toFixed(2)} kg<br>
@@ -451,14 +658,29 @@ function printSticker() {
   window.print();
 }
 
+/* ================= SKU ================= */
+
 function renderSKU() {
-  main(`<div class="card"><h2>SKU Master</h2><p>Admin edit/add pending.</p></div>`);
+  main(`
+    <div class="card">
+      <h2>SKU Master</h2>
+      <p>Admin edit/add pending.</p>
+    </div>
+  `);
 }
+
+/* ================= HELPERS ================= */
 
 function itemsTable(items, del) {
   return `
     <table>
-      <tr><th>Part</th><th>Item</th><th>Qty</th>${del ? "<th>Delete</th>" : ""}</tr>
+      <tr>
+        <th>Part</th>
+        <th>Item</th>
+        <th>Qty</th>
+        ${del ? "<th>Delete</th>" : ""}
+      </tr>
+
       ${(items || []).map((it, i) => `
         <tr>
           <td>${it.part_no || ""}</td>
@@ -491,6 +713,7 @@ function main(html) {
 
 function injectStyle() {
   const style = document.createElement("style");
+
   style.innerHTML = `
     body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#111}
     .wrap{max-width:1000px;margin:auto;padding:20px}
@@ -516,9 +739,11 @@ function injectStyle() {
     .stat{background:#f1f5ff;padding:20px;border-radius:12px;text-align:center}
     .grid3{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
     .bad{color:#a33;font-weight:bold}
+    .line{background:#f8f9fb;border:1px solid #ddd;border-radius:10px;padding:12px;margin:10px 0}
     .sticker{width:360px;border:2px solid #111;padding:18px;margin-top:15px;background:white;color:#111}
     .sticker h2{text-align:center;color:#8b1d1d;letter-spacing:2px}
     @media print{body *{visibility:hidden}#sticker,#sticker *{visibility:visible}#sticker{position:absolute;left:0;top:0}}
   `;
+
   document.head.appendChild(style);
 }
