@@ -744,14 +744,31 @@ function cartonItemWeight() {
 }
 
 function expectedWeight() {
-  return cartonItemWeight() + Number(state.outerWeight || 0);
+  const currentCartonNo = String(state.cartonNo || "");
+
+  const itemWeight = state.cartonItems
+    .filter(it => String(it.carton_no || "") === currentCartonNo)
+    .reduce((sum, it) => {
+      return sum + (Number(it.qty || 0) * Number(it.weight_per_set || 0));
+    }, 0);
+
+  return itemWeight + Number(state.outerWeight || 0);
 }
 
 function expectedBoxHTML() {
+  const currentCartonNo = String(state.cartonNo || "");
+
+  const itemWeight = state.cartonItems
+    .filter(it => String(it.carton_no || "") === currentCartonNo)
+    .reduce((sum, it) => {
+      return sum + (Number(it.qty || 0) * Number(it.weight_per_set || 0));
+    }, 0);
+
   return `
-    Item Weight: <b>${cartonItemWeight().toFixed(2)} kg</b><br>
+    Current Carton No: <b>${state.cartonNo || ""}</b><br>
+    Current Carton Item Weight: <b>${itemWeight.toFixed(2)} kg</b><br>
     Outer Carton Weight: <b>${Number(state.outerWeight || 0).toFixed(2)} kg</b><br>
-    Expected Gross Weight: <b>${expectedWeight().toFixed(2)} kg</b>
+    Current Carton Gross Weight: <b>${(itemWeight + Number(state.outerWeight || 0)).toFixed(2)} kg</b>
   `;
 }
 
@@ -950,7 +967,7 @@ function itemsTable(items, del) {
       ${(items || []).map((it, i) => `
         <tr>
           <td>${it.carton_no || state.cartonNo || ""}</td>
-          <td>${it.total_cartons || state.totalCartons || ""}</td>
+          <td>${state.totalCartons || ""}</td>
           <td>${it.part_no || ""}</td>
           <td>${it.model || it.model_name || ""}</td>
           <td>${it.qty || ""}</td>
