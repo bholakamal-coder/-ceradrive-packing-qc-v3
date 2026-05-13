@@ -781,22 +781,44 @@ async function saveCarton() {
   try {
     if (!state.selectedOrder) return alert("Select order");
     if (!state.cartonItems.length) return alert("Add carton items");
-    if (!state.cartonNo) return alert("Carton no required");
 
-    await api(API.cartons, {
-      method: "POST",
-      body: JSON.stringify({
-        order_id: state.selectedOrder.id,
-        carton_no: state.cartonNo,
-        total_cartons: state.totalCartons,
-        outer_weight: Number(state.outerWeight || 0),
-        expected_weight: expectedWeight(),
-        packed_by: state.user.username,
-        items: state.cartonItems
-      })
-    });
+    const cartonNos = [...new Set(
+      state.cartonItems.map(it => String(it.carton_no || "").trim()).filter(Boolean)
+    )];
 
-    alert("Carton sent to QC");
+    if (!cartonNos.length) return alert("Carton no required");
+
+    const totalCartons = String(
+      Math.max(...cartonNos.map(n => Number(n || 0)))
+    );
+
+    for (const cartonNo of cartonNos) {
+      const itemsForCarton = state.cartonItems.filter(it =>
+        String(it.carton_no) === String(cartonNo)
+      );
+
+      const itemWeight = itemsForCarton.reduce((sum, it) => {
+        return sum + (Number(it.qty || 0) * Number(it.weight_per_set || 0));
+      }, 0);
+
+      const expectedGross =
+        itemWeight + Number(state.outerWeight || 0);
+
+      await api(API.cartons, {
+        method: "POST",
+        body: JSON.stringify({
+          order_id: state.selectedOrder.id,
+          carton_no: cartonNo,
+          total_cartons: totalCartons,
+          outer_weight: Number(state.outerWeight || 0),
+          expected_weight: expectedGross,
+          packed_by: state.user.username,
+          items: itemsForCarton
+        })
+      });
+    }
+
+    alert("All cartons sent to QC");
 
     state.cartonItems = [];
     state.selectedOrder = null;
