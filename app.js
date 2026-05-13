@@ -556,7 +556,7 @@ function renderPacking() {
             ">
         </div>
       ` : ""}
-
+${o ? packingCartonList(o.id) : ""}
       ${itemsTable(state.cartonItems, true)}
 
       <div class="info" id="expectedBox">
@@ -569,7 +569,60 @@ function renderPacking() {
     </div>
   `);
 }
+function packingCartonList(orderId) {
+  const list = state.cartons.filter(c =>
+    String(c.order_id) === String(orderId)
+  );
 
+  if (!list.length) return "";
+
+  return `
+    <h3>Packed Cartons</h3>
+
+    <table>
+      <tr>
+        <th>Carton</th>
+        <th>Expected Weight</th>
+        <th>Actual Weight</th>
+        <th>Status</th>
+        <th>Open</th>
+      </tr>
+
+      ${list.map(c => `
+        <tr>
+          <td>${c.carton_no}/${c.total_cartons || ""}</td>
+          <td>${Number(c.expected_weight || 0).toFixed(2)} kg</td>
+          <td>${Number(c.actual_weight || 0).toFixed(2)} kg</td>
+          <td>${c.status || c.qc_status || "PENDING_QC"}</td>
+          <td>
+            <button onclick="openPackingCarton(${c.id})">
+              Open
+            </button>
+          </td>
+        </tr>
+      `).join("")}
+    </table>
+  `;
+}
+
+async function openPackingCarton(id) {
+  try {
+    const data = await api(`${API.cartons}?id=${id}`);
+
+    const c = data.carton;
+
+    alert(
+      `Party: ${c.party_name}\n` +
+      `Carton: ${c.carton_no}/${c.total_cartons || ""}\n` +
+      `Expected Weight: ${Number(c.expected_weight || 0).toFixed(2)} kg\n` +
+      `Actual Weight: ${Number(c.actual_weight || 0).toFixed(2)} kg\n` +
+      `Status: ${c.status || c.qc_status}`
+    );
+
+  } catch (e) {
+    alert("Carton open failed: " + e.message);
+  }
+}
 async function selectOrder(id) {
   if (!id) return;
 
