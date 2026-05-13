@@ -1,480 +1,544 @@
-const $ = (id) => document.getElementById(id);
+const API = {
+  login: "/api/login",
+  orders: "/api/orders",
+  cartons: "/api/cartons",
+  qc: "/api/qc",
+  sku: "/api/sku"
+};
 
-let user = JSON.parse(localStorage.getItem('packing_qc_user') || 'null');
+let state = {
+  user: JSON.parse(localStorage.getItem("user") || "null"),
+  tab: "dashboard",
+  orders: [],
+  cartons: [],
+  skus: [],
+  orderItems: [],
+  cartonItems: [],
+  selectedOrder: null,
+  selectedCarton: null,
+  logoOn: true
+};
 
-let orderSelectedSku = null;
-let orderItems = [];
+document.addEventListener("DOMContentLoaded", init);
 
-let packingOrderItems = [];
-let packingSelectedItem = null;
-let cartonItems = [];
+async function init() {
+  injectStyle();
+  if (!state.user) return renderLogin();
+  await loadAll();
+  renderApp();
+}
 
-let currentQcCarton = null;
-
-async function api(path, options = {}) {
-  const res = await fetch('/api/' + path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
+async function api(url, opts = {}) {
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...opts
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'API error');
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+  if (!res.ok) throw new Error(data.error || "API error");
   return data;
 }
 
-window.addEventListener('load', () => {
-  if (user) enterApp();
+async function loadAll() {
+  try {
+    const [o, c, s] = await Promise.all([
+      api(API.orders).catch(() => ({ orders: [] })),
+      api(API.cartons).catch(() => ({ cartons: [] })),
+      api(API.sku).catch(() => ({ skus: [] }))
+    ]);
+    state.orders = o.orders || [];
+    state.cartons = c.cartons || [];
+    state.skus = s.skus || s.items || [];
+  } catch (e) {
+    alert(e.message);
+  }
+}
 
-  $('orderSkuSearch')?.addEventListener('keydown', async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      await selectOrderSku();
-      $('orderQty')?.focus();
-    }
-  });
-
-  $('orderQty')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addOrderItem();
-    }
-  });
-
-  $('outerWeight')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); $('packItemSearch')?.focus(); }
-  });
-
-  $('packItemSearch')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      selectPackingItem();
-      $('packQty')?.focus();
-    }
-  });
-
-  $('packQty')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addCartonItem();
-    }
-  });
-
-  $('cartonNo')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); saveCarton(); }
-  });
-
-  $('outerWeight')?.addEventListener('input', renderCartonItems);
-});
+function renderLogin() {
+  document.body.innerHTML = `
+    <div class="wrap">
+      <div class="card">
+        <h1>Ceradrive Dispatch QC V3</h1>
+        <p>Order → Packing → QC → Sticker Print</p>
+        <h2>Login</h2>
+        <input id="u" placeholder="Username" value="admin">
+        <input id="p" placeholder="Password" type="password" value="Admin123">
+        <button onclick="login()">Login</button>
+        <small>admin/Admin123, packing/Pack123, qc/Qc123</small>
+      </div>
+    </div>`;
+}
 
 async function login() {
   try {
-    const username = $('loginUser').value.trim();
-    const password = $('loginPass').value.trim();
-    const data = await api('login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password })
+    const data = await api(API.login, {
+      method: "POST",
+      body: JSON.stringify({
+        username: val("u"),
+        password: val("p")
+      })
     });
-    user = data.user;
-    localStorage.setItem('packing_qc_user', JSON.stringify(user));
-    enterApp();
+    state.user = data.user;
+    localStorage.setItem("user", JSON.stringify(data.user));
+    await loadAll();
+    renderApp();
   } catch (e) {
-    alert('Login failed: ' + e.message);
+    alert("Login failed: " + e.message);
   }
 }
 
 function logout() {
-  localStorage.removeItem('packing_qc_user');
-  user = null;
-  location.reload();
+  localStorage.removeItem("user");
+  state.user = null;
+  renderLogin();
 }
 
-function enterApp() {
-  $('loginPage')?.classList.add('hidden');
-  $('appPage')?.classList.remove('hidden');
-  $('welcome').innerText = 'Welcome, ' + user.username;
-  $('roleText').innerText = 'Role: ' + user.role;
+function renderApp() {
+  document.body.innerHTML = `
+    <div class="wrap">
+      <div class="card">
+        <h1>Ceradrive Dispatch QC V3</h1>
+        <p>Order → Packing → QC → Sticker Print</p>
+      </div>
 
-  applyRole();
-  showTab(user.role === 'ENTRY' ? 'packing' : user.role === 'QC' ? 'qc' : 'dashboard');
+      <div class="card top">
+        <div>
+          <h2>Welcome, ${state.user.username}</h2>
+          <p>Role: ${state.user.role}</p>
+        </div>
+        <button class="danger" onclick="logout()">Logout</button>
+      </div>
+
+      <div class="tabs">
+        ${tabBtn("dashboard","Dashboard")}
+        ${tabBtn("orders","Orders")}
+        ${tabBtn("packing","Packing")}
+        ${tabBtn("qc","QC")}
+        ${tabBtn("sku","SKU Master")}
+      </div>
+
+      <div id="main"></div>
+    </div>`;
+  renderTab();
 }
 
-function applyRole() {
-  const role = String(user.role || '').toUpperCase();
-
-  $('tabOrders').style.display = role === 'ADMIN' ? 'block' : 'none';
-  $('tabSku').style.display = role === 'ADMIN' ? 'block' : 'none';
-  $('tabPacking').style.display = (role === 'ADMIN' || role === 'ENTRY') ? 'block' : 'none';
-  $('tabQC').style.display = (role === 'ADMIN' || role === 'QC') ? 'block' : 'none';
+function tabBtn(id, label) {
+  return `<button class="${state.tab===id?'active':''}" onclick="setTab('${id}')">${label}</button>`;
 }
 
-function showTab(tab) {
-  ['dashboard','orders','packing','qc','sku'].forEach(t => {
-    $(t + 'Tab')?.classList.toggle('hidden', t !== tab);
-    $('tab' + t.charAt(0).toUpperCase() + t.slice(1))?.classList.toggle('active', t === tab);
-  });
-  refreshAll();
+function setTab(t) {
+  state.tab = t;
+  renderApp();
 }
 
-async function refreshAll() {
-  if (!user) return;
-  await Promise.allSettled([
-    loadDashboard(),
-    loadOrders(),
-    loadPackOrders(),
-    loadQcCartons(),
-    loadSkuList()
-  ]);
+function renderTab() {
+  if (state.tab === "orders") return renderOrders();
+  if (state.tab === "packing") return renderPacking();
+  if (state.tab === "qc") return renderQC();
+  if (state.tab === "sku") return renderSKU();
+  renderDashboard();
 }
 
-async function loadDashboard() {
-  try {
-    const d = await api('dashboard');
-    $('dashboardData').innerHTML = `
-      <div>Total Orders: <b>${d.total_orders || 0}</b></div>
-      <div>Pending Orders: <b>${d.pending_orders || 0}</b></div>
-      <div>Completed Orders: <b>${d.completed_orders || 0}</b></div>
-    `;
-  } catch (e) {
-    $('dashboardData').innerText = e.message;
-  }
+function renderDashboard() {
+  const pending = state.cartons.filter(c => (c.status || c.qc_status) === "PENDING_QC").length;
+  const pass = state.cartons.filter(c => (c.status || c.qc_status) === "PASS").length;
+  const recheck = state.cartons.filter(c => (c.status || c.qc_status) === "RECHECK").length;
+
+  main(`
+    <div class="card">
+      <h2>Dashboard</h2>
+      <div class="grid3">
+        <div class="stat">Orders<br><b>${state.orders.length}</b></div>
+        <div class="stat">Pending QC<br><b>${pending}</b></div>
+        <div class="stat">PASS<br><b>${pass}</b></div>
+        <div class="stat">RECHECK<br><b>${recheck}</b></div>
+      </div>
+    </div>
+  `);
 }
 
-/* ORDERS */
-async function selectOrderSku() {
-  const q = $('orderSkuSearch').value.trim();
-  if (!q) return;
-  try {
-    const d = await api('sku?q=' + encodeURIComponent(q));
-    const skus = d.skus || [];
-    if (!skus.length) return alert('Part not found');
-    orderSelectedSku = skus[0];
-    $('orderSkuSearch').value = `${orderSelectedSku.part_no} - ${orderSelectedSku.model || ''}`;
-    $('orderSelectedSku').innerText = `Selected: ${orderSelectedSku.part_no} ${orderSelectedSku.model || ''}`;
-  } catch (e) {
-    alert('SKU error: ' + e.message);
-  }
+function renderOrders() {
+  state.orderItems = state.orderItems || [];
+  main(`
+    <div class="card">
+      <h2>Admin Order Entry</h2>
+      <input id="party" placeholder="Party Name">
+      <div class="row">
+        <div class="searchBox">
+          <input id="orderSearch" placeholder="Search Part / Model then Enter" oninput="showSkuSuggest('orderSearch','orderSuggest')" onkeydown="orderSearchKey(event)">
+          <div id="orderSuggest" class="suggest"></div>
+        </div>
+        <input id="orderQty" placeholder="Qty then Enter" type="number" onkeydown="if(event.key==='Enter') addOrderItem()">
+      </div>
+      ${itemsTable(state.orderItems, true)}
+      <button class="green" onclick="saveOrder()">Save Order</button>
+      <h3>Orders</h3>
+      ${state.orders.map(o => `<div class="line">#${o.id} — <b>${o.party_name}</b> — ${o.status || ""}</div>`).join("") || "No orders"}
+    </div>
+  `);
+}
+
+let tempSku = null;
+
+function showSkuSuggest(inputId, boxId) {
+  const q = val(inputId).toLowerCase().trim();
+  const box = document.getElementById(boxId);
+  if (!q) return box.innerHTML = "";
+  const list = state.skus.filter(s =>
+    String(s.part_no || s.part || "").toLowerCase().includes(q) ||
+    String(s.model || s.model_name || s.item || "").toLowerCase().includes(q)
+  ).slice(0, 10);
+
+  box.innerHTML = list.map(s => `
+    <div onclick='selectSku(${JSON.stringify(s)})'>
+      <b>${s.part_no || s.part}</b> — ${s.model || s.model_name || s.item || ""}
+    </div>
+  `).join("");
+}
+
+function selectSku(s) {
+  tempSku = s;
+  document.querySelectorAll(".suggest").forEach(x => x.innerHTML = "");
+}
+
+function orderSearchKey(e) {
+  if (e.key !== "Enter") return;
+  const q = val("orderSearch").toLowerCase();
+  tempSku = state.skus.find(s =>
+    String(s.part_no || s.part || "").toLowerCase().includes(q) ||
+    String(s.model || s.model_name || s.item || "").toLowerCase().includes(q)
+  );
+  document.getElementById("orderQty").focus();
 }
 
 function addOrderItem() {
-  if (!orderSelectedSku) return alert('Search SKU and press Enter first');
-  const qty = Number($('orderQty').value || 0);
-  if (qty <= 0) return alert('Enter qty');
+  if (!tempSku) return alert("Select item first");
+  const qty = Number(val("orderQty"));
+  if (!qty) return alert("Enter qty");
 
-  orderItems.push({ ...orderSelectedSku, qty });
-  orderSelectedSku = null;
-  $('orderSkuSearch').value = '';
-  $('orderQty').value = '';
-  $('orderSelectedSku').innerText = '';
-  renderOrderItems();
-  $('orderSkuSearch').focus();
-}
+  state.orderItems.push({
+    part_no: tempSku.part_no || tempSku.part,
+    model: tempSku.model || tempSku.model_name || tempSku.item || "",
+    qty,
+    weight_per_set: Number(tempSku.weight_per_set || tempSku.weight || 0)
+  });
 
-function removeOrderItem(i) {
-  orderItems.splice(i, 1);
-  renderOrderItems();
-}
-
-function renderOrderItems() {
-  $('orderItemsTable').innerHTML = `
-    <table>
-      <tr><th>Part</th><th>Item</th><th>Qty</th><th>Delete</th></tr>
-      ${orderItems.map((x, i) => `
-        <tr>
-          <td>${x.part_no}</td>
-          <td>${x.model || ''}</td>
-          <td>${x.qty}</td>
-          <td><button class="red" onclick="removeOrderItem(${i})">Delete</button></td>
-        </tr>
-      `).join('')}
-    </table>
-  `;
+  renderOrders();
 }
 
 async function saveOrder() {
   try {
-    const party = $('orderParty').value.trim();
-    if (!party) return alert('Party name required');
-    if (!orderItems.length) return alert('Add items');
-
-    await api('orders', {
-      method: 'POST',
-      body: JSON.stringify({ party_name: party, created_by: user.username, items: orderItems })
+    await api(API.orders, {
+      method: "POST",
+      body: JSON.stringify({
+        party_name: val("party"),
+        created_by: state.user.username,
+        items: state.orderItems
+      })
     });
-
-    alert('Order saved');
-    $('orderParty').value = '';
-    orderItems = [];
-    renderOrderItems();
-    await refreshAll();
+    state.orderItems = [];
+    await loadAll();
+    renderOrders();
   } catch (e) {
-    alert('Save order failed: ' + e.message);
+    alert("Save order failed: " + e.message);
   }
 }
 
-async function loadOrders() {
-  try {
-    const d = await api('orders');
-    $('ordersList').innerHTML = (d.orders || []).map(o => `
-      <div class="card">
-        <b>${o.party_name}</b> <span class="badge">${o.status || 'PENDING'}</span><br>
-        <span class="small">Order #${o.id} • ${o.created_at || ''}</span><br>
-        <button class="red" onclick="deleteOrder(${o.id})">Delete Order</button>
+function renderPacking() {
+  const orderOptions = state.orders.map(o => `<option value="${o.id}">#${o.id} — ${o.party_name}</option>`).join("");
+  const o = state.selectedOrder;
+
+  main(`
+    <div class="card">
+      <h2>Packing Entry</h2>
+      <select onchange="selectOrder(this.value)">
+        <option>Select Party / Order</option>
+        ${orderOptions}
+      </select>
+
+      ${o ? `
+        <div class="info">
+          <b>Party:</b> ${o.party_name}<br>
+          <b>Order No:</b> ${o.id}
+        </div>
+      ` : ""}
+
+      <div class="row3">
+        <input id="outerWeight" placeholder="Outer Carton Weight kg" type="number" step="0.01">
+        <input id="cartonNo" placeholder="Carton No">
+        <input id="totalCartons" placeholder="Total Cartons">
       </div>
-    `).join('') || 'No orders';
-  } catch (e) {
-    $('ordersList').innerText = e.message;
-  }
+
+      ${o ? packingItemSelector(o) : ""}
+
+      ${itemsTable(state.cartonItems, true)}
+
+      <div class="info">
+        Item Weight: <b>${cartonItemWeight().toFixed(2)} kg</b><br>
+        Outer Carton Weight: <b>${Number(valSafe("outerWeight")).toFixed(2)} kg</b><br>
+        Expected Gross Weight: <b>${expectedWeight().toFixed(2)} kg</b>
+      </div>
+
+      <button class="green" onclick="saveCarton()">Save Carton / Send to QC</button>
+    </div>
+  `);
 }
 
-async function deleteOrder(id) {
-  if (!confirm('Delete this order?')) return;
-  try {
-    await api('orders?id=' + id, { method: 'DELETE' });
-    await refreshAll();
-  } catch (e) {
-    alert('Delete failed: ' + e.message);
-  }
+async function selectOrder(id) {
+  state.selectedOrder = state.orders.find(o => String(o.id) === String(id));
+  state.cartonItems = [];
+  renderPacking();
 }
 
-/* PACKING */
-async function loadPackOrders() {
-  try {
-    const d = await api('orders');
-    $('packOrder').innerHTML = '<option value="">Select Order / Party</option>' +
-      (d.orders || []).map(o => `<option value="${o.id}">#${o.id} - ${o.party_name}</option>`).join('');
-  } catch (e) {}
-}
+function packingItemSelector(o) {
+  const items = o.items || o.order_items || [];
+  return `
+    <h3>Order Items / Balance</h3>
+    <table>
+      <tr><th>Part</th><th>Item</th><th>Order Qty</th><th>Packed</th><th>Balance</th></tr>
+      ${items.map(it => {
+        const packed = Number(it.packed_qty || 0);
+        const bal = Number(it.qty || 0) - packed;
+        return `<tr><td>${it.part_no}</td><td>${it.model || it.model_name || ""}</td><td>${it.qty}</td><td>${packed}</td><td><b>${bal}</b></td></tr>`;
+      }).join("")}
+    </table>
 
-async function loadOrderForPacking() {
-  const id = $('packOrder').value;
-  if (!id) return;
-
-  try {
-    const d = await api('orders?id=' + id);
-    packingOrderItems = d.items || [];
-    cartonItems = [];
-    packingSelectedItem = null;
-    renderCartonItems();
-    $('outerWeight').focus();
-  } catch (e) {
-    alert('Load order failed: ' + e.message);
-  }
-}
-
-function selectPackingItem() {
-  const q = $('packItemSearch').value.trim().toLowerCase();
-  if (!q) return;
-  const item = packingOrderItems.find(x =>
-    String(x.part_no || '').toLowerCase().includes(q) ||
-    String(x.model || '').toLowerCase().includes(q)
-  );
-  if (!item) return alert('Item not found in selected order');
-
-  packingSelectedItem = item;
-  $('packItemSearch').value = `${item.part_no} - ${item.model || ''}`;
-  $('packSelectedItem').innerText = `Selected: ${item.part_no} ${item.model || ''}`;
+    <div class="row">
+      <select id="packItem">
+        <option>Select order item</option>
+        ${items.map(it => {
+          const packed = Number(it.packed_qty || 0);
+          const bal = Number(it.qty || 0) - packed;
+          return `<option value="${it.part_no}">${it.part_no} — ${it.model || it.model_name || ""} — Balance ${bal}</option>`;
+        }).join("")}
+      </select>
+      <input id="packQty" placeholder="Qty then Enter" type="number" onkeydown="if(event.key==='Enter') addCartonItem()">
+    </div>
+  `;
 }
 
 function addCartonItem() {
-  if (!packingSelectedItem) return alert('Search item and press Enter first');
-  const qty = Number($('packQty').value || 0);
-  if (qty <= 0) return alert('Enter qty');
+  const part = val("packItem");
+  const qty = Number(val("packQty"));
+  if (!state.selectedOrder || !part || !qty) return alert("Select item and qty");
 
-  cartonItems.push({ ...packingSelectedItem, qty });
-  packingSelectedItem = null;
-  $('packItemSearch').value = '';
-  $('packQty').value = '';
-  $('packSelectedItem').innerText = '';
-  renderCartonItems();
-  $('packItemSearch').focus();
+  const item = (state.selectedOrder.items || state.selectedOrder.order_items || []).find(x => x.part_no === part);
+  const balance = Number(item.qty || 0) - Number(item.packed_qty || 0);
+  const already = state.cartonItems.filter(x => x.part_no === part).reduce((a,b)=>a+Number(b.qty),0);
+
+  if (qty + already > balance) {
+    return alert(`Qty exceeds balance. Balance: ${balance - already}`);
+  }
+
+  state.cartonItems.push({
+    part_no: item.part_no,
+    model: item.model || item.model_name || "",
+    qty,
+    weight_per_set: Number(item.weight_per_set || 0)
+  });
+
+  renderPacking();
 }
 
-function removeCartonItem(i) {
-  cartonItems.splice(i, 1);
-  renderCartonItems();
+function cartonItemWeight() {
+  return state.cartonItems.reduce((sum, it) => sum + (Number(it.qty) * Number(it.weight_per_set || 0)), 0);
 }
 
-function renderCartonItems() {
-  if (!$('packItemsTable')) return;
-  const itemsWeight = cartonItems.reduce((s, x) => s + (Number(x.weight_per_set || 0) * Number(x.qty || 0)), 0);
-  const outer = Number($('outerWeight')?.value || 0);
-  const gross = itemsWeight + outer;
-
-  $('packItemsTable').innerHTML = `
-    <table>
-      <tr><th>Part</th><th>Item</th><th>Qty</th><th>Delete</th></tr>
-      ${cartonItems.map((x, i) => `
-        <tr>
-          <td>${x.part_no}</td>
-          <td>${x.model || ''}</td>
-          <td>${x.qty}</td>
-          <td><button class="red" onclick="removeCartonItem(${i})">Delete</button></td>
-        </tr>
-      `).join('')}
-    </table>
-  `;
-
-  $('packWeight').innerHTML = `
-    Item Weight: <b>${itemsWeight.toFixed(2)} kg</b><br>
-    Outer Carton Weight: <b>${outer.toFixed(2)} kg</b><br>
-    Expected Gross Weight: <b>${gross.toFixed(2)} kg</b>
-  `;
+function expectedWeight() {
+  return cartonItemWeight() + Number(valSafe("outerWeight"));
 }
 
 async function saveCarton() {
   try {
-    if (!$('packOrder').value) return alert('Select order');
-    if (!cartonItems.length) return alert('Add carton items');
-    if (!$('cartonNo').value.trim()) return alert('Enter carton no');
-
-    const itemsWeight = cartonItems.reduce((s, x) => s + (Number(x.weight_per_set || 0) * Number(x.qty || 0)), 0);
-    const outer = Number($('outerWeight').value || 0);
-
-    await api('cartons', {
-      method: 'POST',
+    await api(API.cartons, {
+      method: "POST",
       body: JSON.stringify({
-        order_id: $('packOrder').value,
-        carton_no: $('cartonNo').value.trim(),
-        total_cartons: $('totalCartons').value.trim(),
-        outer_weight: outer,
-        expected_weight: itemsWeight + outer,
-        items: cartonItems
+        order_id: state.selectedOrder.id,
+        carton_no: val("cartonNo"),
+        total_cartons: val("totalCartons"),
+        outer_weight: Number(valSafe("outerWeight")),
+        expected_weight: expectedWeight(),
+        packed_by: state.user.username,
+        items: state.cartonItems
       })
     });
 
-    alert('Carton sent to QC');
-    cartonItems = [];
-    $('cartonNo').value = '';
-    renderCartonItems();
-    await refreshAll();
+    state.cartonItems = [];
+    await loadAll();
+    renderPacking();
   } catch (e) {
-    alert('Carton save failed: ' + e.message);
-  }
-}
-
-/* QC */
-async function loadQcCartons() {
-  try {
-    const d = await api('cartons');
-    $('qcCarton').innerHTML = '<option value="">Select Carton</option>' +
-      (d.cartons || []).map(c => `<option value="${c.id}">Carton ${c.carton_no} / ${c.total_cartons || ''} - ${c.party_name || ''} - ${c.status}</option>`).join('');
-  } catch (e) {}
-}
-
-async function loadCartonForQC() {
-  const id = $('qcCarton').value;
-  if (!id) return;
-  try {
-    const d = await api('cartons?id=' + id);
-    currentQcCarton = d.carton;
-    renderQC();
-  } catch (e) {
-    alert('Load carton failed: ' + e.message);
+    alert("Carton save failed: " + e.message);
   }
 }
 
 function renderQC() {
-  const c = currentQcCarton;
-  if (!c) return;
+  const parties = [...new Set(state.cartons.map(c => c.party_name).filter(Boolean))];
 
-  $('qcDetails').innerHTML = `
+  main(`
     <div class="card">
-      <b>${c.party_name || ''}</b><br>
-      Carton No: <b>${c.carton_no} / ${c.total_cartons || ''}</b><br>
-      Expected Weight: <b>${Number(c.expected_weight || 0).toFixed(2)} kg</b><br>
-      Status: <b>${c.status || 'PENDING'}</b>
-      <table>
-        <tr><th>Part</th><th>Item</th><th>Qty</th></tr>
-        ${(c.items || []).map(x => `
-          <tr><td>${x.part_no}</td><td>${x.model || ''}</td><td>${x.qty}</td></tr>
-        `).join('')}
-      </table>
+      <h2>QC / Recheck</h2>
+
+      <select id="qcParty" onchange="renderQCCartons(this.value)">
+        <option>Select Party</option>
+        ${parties.map(p => `<option>${p}</option>`).join("")}
+      </select>
+
+      <div id="qcCartons"></div>
+      <div id="qcDetails"></div>
     </div>
+  `);
+}
+
+function renderQCCartons(party) {
+  const list = state.cartons.filter(c => c.party_name === party);
+  document.getElementById("qcCartons").innerHTML = `
+    <select onchange="selectCarton(this.value)">
+      <option>Select Carton</option>
+      ${list.map(c => `<option value="${c.id}">${c.party_name} — Carton ${c.carton_no}/${c.total_cartons || ""} — ${c.status || c.qc_status}</option>`).join("")}
+    </select>
   `;
 }
 
-async function saveQC(status) {
-  if (!currentQcCarton) return alert('Select carton');
-  const actual = $('actualWeight').value;
-  if (!actual) return alert('Enter actual weight');
+async function selectCarton(id) {
+  const data = await api(`${API.cartons}?id=${id}`);
+  state.selectedCarton = data.carton;
+  renderQCDetails();
+}
 
+function renderQCDetails() {
+  const c = state.selectedCarton;
+  const pass = (c.status || c.qc_status) === "PASS";
+
+  document.getElementById("qcDetails").innerHTML = `
+    <div class="info">
+      <b>Party:</b> ${c.party_name}<br>
+      <b>Carton:</b> ${c.carton_no}/${c.total_cartons || ""}<br>
+      <b>Expected Weight:</b> ${Number(c.expected_weight || 0).toFixed(2)} kg<br>
+      <b>Actual Weight:</b> ${Number(c.actual_weight || 0).toFixed(2)} kg<br>
+      <b>Status:</b> ${c.status || c.qc_status}
+    </div>
+
+    ${itemsTable(c.items || [], false)}
+
+    <input id="actualWeight" placeholder="Actual Weight kg" type="number" step="0.01" value="${c.actual_weight || ""}">
+    <button class="green" onclick="saveQC()">Auto PASS / RECHECK</button>
+
+    <label><input type="checkbox" ${state.logoOn ? "checked" : ""} onchange="state.logoOn=this.checked; renderQCDetails()"> Show Ceradrive Logo on Sticker</label>
+
+    ${pass ? `<button onclick="printSticker()">Print Sticker</button>${stickerHTML(c)}` : `<p class="bad">Sticker only for QC PASS cartons</p>`}
+  `;
+}
+
+async function saveQC() {
   try {
-    await api('qc', {
-      method: 'POST',
-      body: JSON.stringify({ carton_id: currentQcCarton.id, actual_weight: actual, qc_status: status })
+    const data = await api(API.qc, {
+      method: "POST",
+      body: JSON.stringify({
+        carton_id: state.selectedCarton.id,
+        actual_weight: Number(val("actualWeight"))
+      })
     });
 
-    currentQcCarton.actual_weight = actual;
-    currentQcCarton.status = status;
-    alert('QC saved: ' + status);
-    renderQC();
-    await loadQcCartons();
+    await loadAll();
+    await selectCarton(state.selectedCarton.id);
+    alert(`QC Status: ${data.status} | Difference: ${data.difference} kg`);
   } catch (e) {
-    alert('QC save failed: ' + e.message);
+    alert("QC failed: " + e.message);
   }
 }
 
-function printSticker() {
-  if (!currentQcCarton) return alert('Select carton');
-  const c = currentQcCarton;
-  const showLogo = $('showLogo').checked;
-  const totalQty = (c.items || []).reduce((s, x) => s + Number(x.qty || 0), 0);
-  const itemNames = (c.items || []).map(x => `${x.part_no} ${x.model || ''}`).join('<br>');
-  const actual = c.actual_weight || $('actualWeight').value || '';
-
-  const html = `
-    <div class="sticker">
-      ${showLogo ? '<div class="logo">CERADRIVE</div>' : ''}
-      <h2>${c.party_name || ''}</h2>
-      <div class="line"></div>
-      <b>Carton No:</b> ${c.carton_no} / ${c.total_cartons || ''}<br>
-      <b>Items:</b><br>${itemNames}<br>
+function stickerHTML(c) {
+  const totalQty = (c.items || []).reduce((a,b)=>a+Number(b.qty),0);
+  return `
+    <div id="sticker" class="sticker">
+      ${state.logoOn ? `<h2>CERADRIVE</h2>` : ""}
+      <h3>${c.party_name}</h3>
+      <hr>
+      <b>Carton No:</b> ${c.carton_no}/${c.total_cartons || ""}<br>
+      <b>Items:</b><br>
+      ${(c.items || []).map(i => `${i.part_no} ${i.model || ""} — ${i.qty}`).join("<br>")}<br>
       <b>Total Qty:</b> ${totalQty}<br>
       <b>Expected Weight:</b> ${Number(c.expected_weight || 0).toFixed(2)} kg<br>
-      <b>Actual Weight:</b> ${actual} kg<br>
-      <b>QC Status:</b> ${c.status || 'PENDING'}<br>
+      <b>Actual Weight:</b> ${Number(c.actual_weight || 0).toFixed(2)} kg<br>
+      <b>QC Status:</b> ${c.status || c.qc_status}<br>
       <b>Date/Time:</b> ${new Date().toLocaleString()}
     </div>
   `;
+}
 
-  $('stickerPreview').innerHTML = html;
-  $('stickerPrintArea').innerHTML = html;
+function printSticker() {
   window.print();
 }
 
-/* SKU MASTER */
-async function saveSku() {
-  try {
-    if (!$('skuPart').value.trim()) return alert('Part no required');
-    await api('sku', {
-      method: 'POST',
-      body: JSON.stringify({
-        part_no: $('skuPart').value.trim(),
-        make_name: $('skuMake').value.trim(),
-        model: $('skuModel').value.trim(),
-        weight_per_set: $('skuWeight').value || 0
-      })
-    });
-    alert('SKU saved');
-    $('skuPart').value = '';
-    $('skuMake').value = '';
-    $('skuModel').value = '';
-    $('skuWeight').value = '';
-    loadSkuList();
-  } catch (e) {
-    alert('SKU save failed: ' + e.message);
-  }
+function renderSKU() {
+  main(`<div class="card"><h2>SKU Master</h2><p>Admin edit/add pending.</p></div>`);
 }
 
-async function loadSkuList() {
-  if (!$('skuList')) return;
-  const q = $('skuFind')?.value?.trim() || '';
-  try {
-    const d = q ? await api('sku?q=' + encodeURIComponent(q)) : { skus: [] };
-    $('skuList').innerHTML = (d.skus || []).map(s => `
-      <div class="card small">
-        <b>${s.part_no}</b> - ${s.model || ''}<br>
-        ${s.make_name || ''} | ${s.weight_per_set || 0} kg
-      </div>
-    `).join('');
-  } catch (e) {}
+function itemsTable(items, del) {
+  return `
+    <table>
+      <tr><th>Part</th><th>Item</th><th>Qty</th>${del ? "<th>Delete</th>" : ""}</tr>
+      ${(items || []).map((it, i) => `
+        <tr>
+          <td>${it.part_no || ""}</td>
+          <td>${it.model || it.model_name || ""}</td>
+          <td>${it.qty || ""}</td>
+          ${del ? `<td><button class="danger" onclick="deleteItem(${i})">Delete</button></td>` : ""}
+        </tr>
+      `).join("")}
+    </table>
+  `;
+}
+
+function deleteItem(i) {
+  if (state.tab === "orders") state.orderItems.splice(i, 1);
+  if (state.tab === "packing") state.cartonItems.splice(i, 1);
+  renderTab();
+}
+
+function val(id) {
+  return document.getElementById(id)?.value || "";
+}
+
+function valSafe(id) {
+  return document.getElementById(id)?.value || 0;
+}
+
+function main(html) {
+  document.getElementById("main").innerHTML = html;
+}
+
+function injectStyle() {
+  const style = document.createElement("style");
+  style.innerHTML = `
+    body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#111}
+    .wrap{max-width:1000px;margin:auto;padding:20px}
+    .card{background:white;padding:22px;border-radius:14px;margin:14px 0;box-shadow:0 2px 8px #0001}
+    .top{display:flex;justify-content:space-between;align-items:center}
+    input,select,button{width:100%;padding:14px;margin:8px 0;border:1px solid #ccc;border-radius:10px;font-size:16px}
+    button{background:#304ffe;color:white;font-weight:bold;border:none;cursor:pointer}
+    .green{background:#2e7d32}
+    .danger{background:#a33}
+    .tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+    .tabs button{background:white;color:#111;border:1px solid #ccc}
+    .tabs button.active{background:#304ffe;color:white}
+    .row{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    table{width:100%;border-collapse:collapse;margin:12px 0}
+    th,td{border:1px solid #ddd;padding:10px;text-align:left}
+    th{background:#eee}
+    .suggest{position:absolute;background:white;border:1px solid #aaa;z-index:999;width:100%;max-height:220px;overflow:auto}
+    .suggest div{padding:12px;border-bottom:1px solid #eee;cursor:pointer}
+    .suggest div:hover{background:#eef}
+    .searchBox{position:relative}
+    .info{background:#f1f5ff;padding:12px;border-radius:10px;margin:10px 0}
+    .stat{background:#f1f5ff;padding:20px;border-radius:12px;text-align:center}
+    .grid3{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+    .bad{color:#a33;font-weight:bold}
+    .sticker{width:360px;border:2px solid #111;padding:18px;margin-top:15px;background:white;color:#111}
+    .sticker h2{text-align:center;color:#8b1d1d;letter-spacing:2px}
+    @media print{body *{visibility:hidden}#sticker,#sticker *{visibility:visible}#sticker{position:absolute;left:0;top:0}}
+  `;
+  document.head.appendChild(style);
 }
