@@ -569,7 +569,6 @@ function renderPacking() {
     </div>
   `);
 }
-}
 
 async function selectOrder(id) {
   if (!id) return;
