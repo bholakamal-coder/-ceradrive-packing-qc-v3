@@ -681,6 +681,8 @@ state.cartonItems.push({
   qty,
   weight_per_set: Number(item.weight_per_set || 0)
 });
+  renderPacking();
+}
 
 function cartonItemWeight() {
   return state.cartonItems.reduce((sum, it) => {
