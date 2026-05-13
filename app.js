@@ -16,10 +16,15 @@ let state = {
   cartonItems: [],
   selectedOrder: null,
   selectedCarton: null,
-  logoOn: true
+  logoOn: true,
+  partyName: "",
+  outerWeight: "",
+  cartonNo: "",
+  totalCartons: ""
 };
 
 let tempSku = null;
+let suggestionList = [];
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -58,8 +63,25 @@ async function loadAll() {
 
   state.orders = o.orders || [];
   state.cartons = c.cartons || [];
-  state.skus = s.skus || s.items || [];
+  state.skus = dedupeSkus(s.skus || s.items || []);
 }
+
+function dedupeSkus(list) {
+  const seen = new Set();
+
+  return (list || []).filter(s => {
+    const part = String(s.part_no || s.part || "").trim();
+    const model = String(s.model || s.model_name || s.item || "").trim();
+    const key = `${part}|${model}`.toLowerCase();
+
+    if (!part || seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
+}
+
+/* LOGIN */
 
 function renderLogin() {
   document.body.innerHTML = `
@@ -91,9 +113,9 @@ async function login() {
 
     state.user = data.user;
     localStorage.setItem("user", JSON.stringify(data.user));
+
     await loadAll();
     renderApp();
-
   } catch (e) {
     alert("Login failed: " + e.message);
   }
@@ -104,6 +126,8 @@ function logout() {
   state.user = null;
   renderLogin();
 }
+
+/* MAIN */
 
 function renderApp() {
   document.body.innerHTML = `
@@ -171,19 +195,20 @@ function renderDashboard() {
   `);
 }
 
-/* ================= ORDERS ================= */
+/* ORDERS */
 
 function renderOrders() {
   main(`
     <div class="card">
       <h2>Admin Order Entry</h2>
 
-      <input id="party" placeholder="Party Name">
+      <input id="party" placeholder="Party Name" value="${escapeAttr(state.partyName)}" oninput="state.partyName=this.value">
 
       <div class="row">
         <div class="searchBox">
           <input id="orderSearch"
             placeholder="Search Part / Model"
+            autocomplete="off"
             oninput="showSkuSuggest('orderSearch','orderSuggest')"
             onkeydown="orderSearchKey(event)">
           <div id="orderSuggest" class="suggest"></div>
@@ -217,6 +242,7 @@ async function showSkuSuggest(inputId, boxId) {
   const box = document.getElementById(boxId);
 
   if (!q) {
+    suggestionList = [];
     box.innerHTML = "";
     return;
   }
@@ -225,20 +251,28 @@ async function showSkuSuggest(inputId, boxId) {
     String(s.part_no || s.part || "").toLowerCase().includes(q) ||
     String(s.model || s.model_name || s.item || "").toLowerCase().includes(q) ||
     String(s.make_name || "").toLowerCase().includes(q)
-  ).slice(0, 10);
+  );
 
   if (!list.length) {
     try {
       const d = await api(API.sku + "?q=" + encodeURIComponent(q));
-      list = (d.skus || d.items || []).slice(0, 10);
+      list = d.skus || d.items || [];
     } catch {}
   }
 
-  box.innerHTML = list.map(s => `
-    <div onclick='selectSku(${JSON.stringify(s).replace(/'/g, "&apos;")})'>
+  suggestionList = dedupeSkus(list).slice(0, 10);
+
+  box.innerHTML = suggestionList.map((s, i) => `
+    <div onclick="selectSkuByIndex(${i})">
       <b>${s.part_no || s.part}</b> — ${s.model || s.model_name || s.item || ""}
     </div>
   `).join("");
+}
+
+function selectSkuByIndex(i) {
+  const s = suggestionList[i];
+  if (!s) return;
+  selectSku(s);
 }
 
 function selectSku(s) {
@@ -270,7 +304,7 @@ async function orderSearchKey(e) {
   if (!tempSku) {
     try {
       const d = await api(API.sku + "?q=" + encodeURIComponent(q));
-      tempSku = (d.skus || d.items || [])[0];
+      tempSku = dedupeSkus(d.skus || d.items || [])[0];
     } catch {}
   }
 
@@ -307,7 +341,7 @@ function addOrderItem() {
 
 async function saveOrder() {
   try {
-    const party = val("party").trim();
+    const party = String(state.partyName || val("party")).trim();
 
     if (!party) return alert("Party name required");
     if (!state.orderItems.length) return alert("Add at least one item");
@@ -324,6 +358,7 @@ async function saveOrder() {
     alert("Order saved");
 
     state.orderItems = [];
+    state.partyName = "";
     await loadAll();
     renderOrders();
 
@@ -348,11 +383,11 @@ async function deleteOrder(id) {
   }
 }
 
-/* ================= PACKING ================= */
+/* PACKING */
 
 function renderPacking() {
   const orderOptions = state.orders.map(o => `
-    <option value="${o.id}">
+    <option value="${o.id}" ${state.selectedOrder && String(state.selectedOrder.id) === String(o.id) ? "selected" : ""}>
       #${o.id} — ${o.party_name}
     </option>
   `).join("");
@@ -376,19 +411,25 @@ function renderPacking() {
       ` : ""}
 
       <div class="row3">
-        <input id="outerWeight" placeholder="Outer Carton Weight kg" type="number" step="0.01" oninput="renderPacking()">
-        <input id="cartonNo" placeholder="Carton No">
-        <input id="totalCartons" placeholder="Total Cartons">
+        <input id="outerWeight" placeholder="Outer Carton Weight kg" type="number" step="0.01"
+          value="${escapeAttr(state.outerWeight)}"
+          oninput="state.outerWeight=this.value; updateExpectedBox()">
+
+        <input id="cartonNo" placeholder="Carton No"
+          value="${escapeAttr(state.cartonNo)}"
+          oninput="state.cartonNo=this.value">
+
+        <input id="totalCartons" placeholder="Total Cartons"
+          value="${escapeAttr(state.totalCartons)}"
+          oninput="state.totalCartons=this.value">
       </div>
 
       ${o ? packingItemSelector(o) : ""}
 
       ${itemsTable(state.cartonItems, true)}
 
-      <div class="info">
-        Item Weight: <b>${cartonItemWeight().toFixed(2)} kg</b><br>
-        Outer Carton Weight: <b>${Number(valSafe("outerWeight")).toFixed(2)} kg</b><br>
-        Expected Gross Weight: <b>${expectedWeight().toFixed(2)} kg</b>
+      <div class="info" id="expectedBox">
+        ${expectedBoxHTML()}
       </div>
 
       <button class="green" onclick="saveCarton()">Save Carton / Send to QC</button>
@@ -402,7 +443,7 @@ async function selectOrder(id) {
   try {
     const data = await api(API.orders + "?id=" + id);
     state.selectedOrder = data.order || state.orders.find(o => String(o.id) === String(id));
-    state.selectedOrder.items = data.items || [];
+    state.selectedOrder.items = data.items || state.selectedOrder.items || [];
     state.cartonItems = [];
     renderPacking();
 
@@ -425,9 +466,11 @@ function packingItemSelector(o) {
         <th>Packed</th>
         <th>Balance</th>
       </tr>
+
       ${items.map(it => {
         const packed = Number(it.packed_qty || 0);
         const bal = Number(it.qty || 0) - packed;
+
         return `
           <tr>
             <td>${it.part_no}</td>
@@ -446,6 +489,7 @@ function packingItemSelector(o) {
         ${items.map(it => {
           const packed = Number(it.packed_qty || 0);
           const bal = Number(it.qty || 0) - packed;
+
           return `
             <option value="${it.part_no}">
               ${it.part_no} — ${it.model || it.model_name || ""} — Balance ${bal}
@@ -497,22 +541,35 @@ function cartonItemWeight() {
 }
 
 function expectedWeight() {
-  return cartonItemWeight() + Number(valSafe("outerWeight"));
+  return cartonItemWeight() + Number(state.outerWeight || 0);
+}
+
+function expectedBoxHTML() {
+  return `
+    Item Weight: <b>${cartonItemWeight().toFixed(2)} kg</b><br>
+    Outer Carton Weight: <b>${Number(state.outerWeight || 0).toFixed(2)} kg</b><br>
+    Expected Gross Weight: <b>${expectedWeight().toFixed(2)} kg</b>
+  `;
+}
+
+function updateExpectedBox() {
+  const box = document.getElementById("expectedBox");
+  if (box) box.innerHTML = expectedBoxHTML();
 }
 
 async function saveCarton() {
   try {
     if (!state.selectedOrder) return alert("Select order");
     if (!state.cartonItems.length) return alert("Add carton items");
-    if (!val("cartonNo")) return alert("Carton no required");
+    if (!state.cartonNo) return alert("Carton no required");
 
     await api(API.cartons, {
       method: "POST",
       body: JSON.stringify({
         order_id: state.selectedOrder.id,
-        carton_no: val("cartonNo"),
-        total_cartons: val("totalCartons"),
-        outer_weight: Number(valSafe("outerWeight")),
+        carton_no: state.cartonNo,
+        total_cartons: state.totalCartons,
+        outer_weight: Number(state.outerWeight || 0),
         expected_weight: expectedWeight(),
         packed_by: state.user.username,
         items: state.cartonItems
@@ -522,8 +579,12 @@ async function saveCarton() {
     alert("Carton sent to QC");
 
     state.cartonItems = [];
-    await loadAll();
     state.selectedOrder = null;
+    state.outerWeight = "";
+    state.cartonNo = "";
+    state.totalCartons = "";
+
+    await loadAll();
     renderPacking();
 
   } catch (e) {
@@ -531,7 +592,7 @@ async function saveCarton() {
   }
 }
 
-/* ================= QC ================= */
+/* QC */
 
 function renderQC() {
   const parties = [...new Set(state.cartons.map(c => c.party_name).filter(Boolean))];
@@ -542,7 +603,7 @@ function renderQC() {
 
       <select id="qcParty" onchange="renderQCCartons(this.value)">
         <option value="">Select Party</option>
-        ${parties.map(p => `<option value="${p}">${p}</option>`).join("")}
+        ${parties.map(p => `<option value="${escapeAttr(p)}">${p}</option>`).join("")}
       </select>
 
       <div id="qcCartons"></div>
@@ -658,7 +719,7 @@ function printSticker() {
   window.print();
 }
 
-/* ================= SKU ================= */
+/* SKU */
 
 function renderSKU() {
   main(`
@@ -669,7 +730,7 @@ function renderSKU() {
   `);
 }
 
-/* ================= HELPERS ================= */
+/* HELPERS */
 
 function itemsTable(items, del) {
   return `
@@ -709,6 +770,15 @@ function valSafe(id) {
 
 function main(html) {
   document.getElementById("main").innerHTML = html;
+}
+
+function escapeAttr(v) {
+  return String(v || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function injectStyle() {
