@@ -181,21 +181,9 @@ function renderOrders() {
 
     </div>
   `);
-}function main(html) {
+function main(html) {
   document.getElementById("main").innerHTML = html;
-}.top{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
 }
-
-.tabs{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:10px;
-  margin:10px 0;
-}
-
 function val(id) {
   return document.getElementById(id)?.value || "";
 }
