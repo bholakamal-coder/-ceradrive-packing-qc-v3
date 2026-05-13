@@ -756,22 +756,50 @@ function expectedWeight() {
 }
 
 function expectedBoxHTML() {
-  const currentCartonNo = String(state.cartonNo || "");
 
-  const itemWeight = state.cartonItems
-    .filter(it => String(it.carton_no || "") === currentCartonNo)
-    .reduce((sum, it) => {
-      return sum + (Number(it.qty || 0) * Number(it.weight_per_set || 0));
-    }, 0);
+  const cartonMap = {};
 
-  return `
-    Current Carton No: <b>${state.cartonNo || ""}</b><br>
-    Current Carton Item Weight: <b>${itemWeight.toFixed(2)} kg</b><br>
-    Outer Carton Weight: <b>${Number(state.outerWeight || 0).toFixed(2)} kg</b><br>
-    Current Carton Gross Weight: <b>${(itemWeight + Number(state.outerWeight || 0)).toFixed(2)} kg</b>
-  `;
+  state.cartonItems.forEach(it => {
+
+    const cartonNo = String(it.carton_no || "");
+
+    if (!cartonMap[cartonNo]) {
+      cartonMap[cartonNo] = 0;
+    }
+
+    cartonMap[cartonNo] +=
+      Number(it.qty || 0) *
+      Number(it.weight_per_set || 0);
+
+  });
+
+  return Object.keys(cartonMap).map(cartonNo => {
+
+    const itemWeight = cartonMap[cartonNo];
+
+    const gross =
+      itemWeight + Number(state.outerWeight || 0);
+
+    return `
+      <div style="margin-bottom:12px;padding:10px;border:1px solid #ccc;border-radius:8px;">
+        <b>Carton No:</b> ${cartonNo}<br>
+        <b>Item Weight:</b> ${itemWeight.toFixed(2)} kg<br>
+        <b>Outer Weight:</b> ${Number(state.outerWeight || 0).toFixed(2)} kg<br>
+        <b>Gross Weight:</b> ${gross.toFixed(2)} kg
+      </div>
+    `;
+
+  }).join("");
 }
+function getCurrentTotalCartons() {
+  const nums = state.cartonItems
+    .map(it => Number(it.carton_no || 0))
+    .filter(n => n > 0);
 
+  if (!nums.length) return "";
+
+  return Math.max(...nums);
+}
 function updateExpectedBox() {
   const box = document.getElementById("expectedBox");
   if (box) box.innerHTML = expectedBoxHTML();
@@ -989,7 +1017,7 @@ function itemsTable(items, del) {
       ${(items || []).map((it, i) => `
         <tr>
           <td>${it.carton_no || state.cartonNo || ""}</td>
-          <td>${state.totalCartons || ""}</td>
+          <td>${getCurrentTotalCartons()}</td>
           <td>${it.part_no || ""}</td>
           <td>${it.model || it.model_name || ""}</td>
           <td>${it.qty || ""}</td>
