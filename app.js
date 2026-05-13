@@ -457,23 +457,105 @@ function renderPacking() {
           <b>Party:</b> ${o.party_name}<br>
           <b>Order No:</b> ${o.id}
         </div>
+
+        <h3>Order Items / Balance</h3>
+
+        <table>
+          <tr>
+            <th>Part</th>
+            <th>Item</th>
+            <th>Order Qty</th>
+            <th>Packed</th>
+            <th>Balance</th>
+          </tr>
+
+          ${(o.items || []).map(it => {
+            const packed = Number(it.packed_qty || 0);
+            const currentCarton = state.cartonItems
+              .filter(x => x.part_no === it.part_no)
+              .reduce((a,b)=>a+Number(b.qty || 0),0);
+
+            const bal = Number(it.qty || 0) - packed - currentCarton;
+
+            return `
+              <tr>
+                <td>${it.part_no}</td>
+                <td>${it.model || it.model_name || ""}</td>
+                <td>${it.qty}</td>
+                <td>${packed}</td>
+                <td><b>${bal}</b></td>
+              </tr>
+            `;
+          }).join("")}
+        </table>
+
       ` : ""}
 
       <div class="row3">
-        <input id="outerWeight" placeholder="Outer Carton Weight kg" type="number" step="0.01"
+
+        <input id="outerWeight"
+          placeholder="Outer Carton Weight kg"
+          inputmode="decimal"
           value="${escapeAttr(state.outerWeight)}"
           oninput="state.outerWeight=this.value; updateExpectedBox()">
 
-        <input id="cartonNo" placeholder="Carton No"
+        <input id="cartonNo"
+          placeholder="Carton No"
           value="${escapeAttr(state.cartonNo)}"
           oninput="state.cartonNo=this.value">
 
-        <input id="totalCartons" placeholder="Total Cartons"
+        <input id="totalCartons"
+          placeholder="Total Cartons"
           value="${escapeAttr(state.totalCartons)}"
           oninput="state.totalCartons=this.value">
+
       </div>
 
-      ${o ? packingItemSelector(o) : ""}
+      ${o ? `
+        <div class="row">
+
+          <select id="packItem"
+            onkeydown="
+              if(event.key==='Enter'){
+                event.preventDefault();
+                document.getElementById('packQty').focus();
+              }
+            ">
+
+            <option value="">Select order item</option>
+
+            ${(o.items || []).map(it => {
+
+              const packed = Number(it.packed_qty || 0);
+
+              const currentCarton = state.cartonItems
+                .filter(x => x.part_no === it.part_no)
+                .reduce((a,b)=>a+Number(b.qty || 0),0);
+
+              const bal = Number(it.qty || 0) - packed - currentCarton;
+
+              return `
+                <option value="${it.part_no}">
+                  ${it.part_no} — ${it.model || it.model_name || ""} — Balance ${bal}
+                </option>
+              `;
+            }).join("")}
+
+          </select>
+
+          <input id="packQty"
+            placeholder="Qty then Enter"
+            type="number"
+            onkeydown="
+              if(event.key==='Enter'){
+                addCartonItem();
+                setTimeout(()=>{
+                  document.getElementById('cartonNo')?.focus();
+                },100);
+              }
+            ">
+        </div>
+      ` : ""}
 
       ${itemsTable(state.cartonItems, true)}
 
@@ -481,9 +563,12 @@ function renderPacking() {
         ${expectedBoxHTML()}
       </div>
 
-      <button class="green" onclick="saveCarton()">Save Carton / Send to QC</button>
+      <button class="green" onclick="saveCarton()">
+        Save Carton / Send to QC
+      </button>
     </div>
   `);
+}
 }
 
 async function selectOrder(id) {
