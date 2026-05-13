@@ -92,21 +92,108 @@ async function login() {
 }
 
 function renderApp() {
+
   document.body.innerHTML = `
     <div class="wrap">
-      <div class="card">
 
-        <h1>
-          LOGIN SUCCESS
-        </h1>
+      <div class="card top">
 
-        <p>
-          App.js syntax fixed.
-        </p>
+        <div>
+          <h2>
+            Ceradrive Packing QC V3
+          </h2>
+
+          <p>
+            Welcome ${state.user.username}
+          </p>
+        </div>
+
+        <button onclick="logout()">
+          Logout
+        </button>
 
       </div>
+
+      <div class="tabs">
+
+        <button onclick="setTab('dashboard')">
+          Dashboard
+        </button>
+
+        <button onclick="setTab('orders')">
+          Orders
+        </button>
+
+      </div>
+
+      <div id="main"></div>
+
     </div>
   `;
+
+  renderTab();
+}function setTab(tab) {
+
+  state.tab = tab;
+
+  renderTab();
+}
+
+function renderTab() {
+
+  if (state.tab === "orders") {
+    renderOrders();
+    return;
+  }
+
+  renderDashboard();
+}
+
+function renderDashboard() {
+
+  main(`
+    <div class="card">
+
+      <h2>
+        Dashboard
+      </h2>
+
+      <p>
+        App working properly.
+      </p>
+
+    </div>
+  `);
+}
+
+function renderOrders() {
+
+  main(`
+    <div class="card">
+
+      <h2>
+        Orders
+      </h2>
+
+      <p>
+        Orders module ready.
+      </p>
+
+    </div>
+  `);
+}function main(html) {
+  document.getElementById("main").innerHTML = html;
+}.top{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.tabs{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin:10px 0;
 }
 
 function val(id) {
