@@ -1,5 +1,6 @@
 const API = {
-  login: "/api/login"
+  login: "/api/login",
+  sku: "/api/sku"
 };
 
 let state = {
@@ -8,7 +9,7 @@ let state = {
 
   orders: JSON.parse(localStorage.getItem("orders") || "[]"),
   cartons: JSON.parse(localStorage.getItem("cartons") || "[]"),
-
+skus: [],
   orderDraftItems: [],
   cartonDraftItems: [],
 
@@ -28,7 +29,7 @@ function init() {
     renderLogin();
     return;
   }
-
+loadSkus();
   renderApp();
 }
 
@@ -46,7 +47,30 @@ async function api(url, opts = {}) {
 
   return data;
 }
+async function loadSkus() {
 
+  try {
+
+    const res = await api(API.sku + "?q=");
+
+    state.skus =
+      res.skus ||
+      res.items ||
+      [];
+
+    console.log(
+      "SKUS LOADED",
+      state.skus
+    );
+
+  } catch (e) {
+
+    console.log(
+      "SKU LOAD FAILED",
+      e
+    );
+  }
+}
 /* LOGIN */
 
 function renderLogin() {
