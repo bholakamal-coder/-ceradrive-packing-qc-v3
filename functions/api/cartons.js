@@ -3,10 +3,13 @@ export async function onRequestGet(context) {
     const DB = context.env.DB;
 
     const result = await DB.prepare(
-      "SELECT data FROM cartons ORDER BY updated_at DESC"
+      "SELECT * FROM cartons ORDER BY updated_at DESC"
     ).all();
 
-    const cartons = result.results.map(r => JSON.parse(r.data));
+   const cartons = result.results.map(r => {
+  if (r.data) return JSON.parse(r.data);
+  return r;
+});
 
     return new Response(
       JSON.stringify({
