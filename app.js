@@ -1068,7 +1068,108 @@ function saveQC() {
   alert("QC Updated: " + c.status);
   renderQCDetails();
 }
+function printSticker(id) {
 
+  const c =
+    state.cartons.find(
+      x => String(x.id) === String(id)
+    );
+
+  if (!c) return;
+
+  const html = `
+    <html>
+    <head>
+      <title>Sticker</title>
+
+      <style>
+        body{
+          font-family:Arial;
+          padding:20px;
+        }
+
+        .sticker{
+          width:350px;
+          border:2px solid #000;
+          padding:15px;
+        }
+
+        h2{
+          margin:0 0 10px;
+          text-align:center;
+        }
+
+        table{
+          width:100%;
+          border-collapse:collapse;
+          margin-top:10px;
+        }
+
+        td,th{
+          border:1px solid #000;
+          padding:5px;
+          font-size:12px;
+        }
+      </style>
+    </head>
+
+    <body onload="window.print()">
+
+      <div class="sticker">
+
+        <h2>CERADRIVE</h2>
+
+        <b>Party:</b>
+        ${c.party}
+        <br>
+
+        <b>Carton:</b>
+        ${c.carton_no}/${c.total_cartons}
+        <br>
+
+        <b>Expected:</b>
+        ${Number(c.expected_weight).toFixed(2)} kg
+        <br>
+
+        <b>Actual:</b>
+        ${Number(c.actual_weight).toFixed(2)} kg
+        <br>
+
+        <b>Status:</b>
+        ${c.status}
+
+        <table>
+          <tr>
+            <th>Part</th>
+            <th>Qty</th>
+          </tr>
+
+          ${(c.items || []).map(i => `
+            <tr>
+              <td>${i.part_no}</td>
+              <td>${i.qty}</td>
+            </tr>
+          `).join("")}
+
+        </table>
+
+      </div>
+
+    </body>
+    </html>
+  `;
+
+  const w =
+    window.open(
+      "",
+      "_blank",
+      "width=400,height=600"
+    );
+
+  w.document.write(html);
+  w.document.close();
+
+}
 function stickerHTML(c) {
   return `
     <button onclick="window.print()">Print Sticker</button>
