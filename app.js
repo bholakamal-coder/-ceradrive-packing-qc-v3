@@ -162,6 +162,7 @@ function renderApp() {
         <button class="${state.tab === "orders" ? "active" : ""}" onclick="setTab('orders')">Orders</button>
         <button class="${state.tab === "packing" ? "active" : ""}" onclick="setTab('packing')">Packing</button>
         <button class="${state.tab === "qc" ? "active" : ""}" onclick="setTab('qc')">QC</button>
+        <button class="${state.tab === "saved" ? "active" : ""}" onclick="setTab('saved')">Saved</button>
       </div>
 
       <div id="main"></div>
@@ -180,6 +181,7 @@ function renderTab() {
   if (state.tab === "orders") return renderOrders();
   if (state.tab === "packing") return renderPacking();
   if (state.tab === "qc") return renderQC();
+  if (state.tab === "saved") return renderSaved();
   renderDashboard();
 }
 
@@ -1294,7 +1296,114 @@ function stickerHTML(c) {
     </div>
   `;
 }
+function renderSaved() {
 
+  const list =
+    [...state.cartons]
+    .reverse();
+
+  main(`
+
+    <div class="card">
+
+      <h2>
+        Saved Cartons
+      </h2>
+
+      <input
+        id="savedSearch"
+        placeholder="Search Party / Carton"
+        oninput="renderSaved()"
+      >
+
+      <table>
+
+        <tr>
+
+          <th>Party</th>
+
+          <th>Carton</th>
+
+          <th>Status</th>
+
+          <th>Gross</th>
+
+          <th>Action</th>
+
+        </tr>
+
+        ${list.filter(c => {
+
+          const q =
+            (
+              document.getElementById(
+                "savedSearch"
+              )?.value || ""
+            )
+            .toLowerCase();
+
+          if (!q) return true;
+
+          return (
+
+            String(c.party)
+            .toLowerCase()
+            .includes(q)
+
+            ||
+
+            String(c.carton_no)
+            .toLowerCase()
+            .includes(q)
+
+          );
+
+        }).map(c => `
+
+          <tr>
+
+            <td>
+              ${escapeHTML(c.party)}
+            </td>
+
+            <td>
+              ${c.carton_no}/${c.total_cartons}
+            </td>
+
+            <td>
+              ${c.status}
+            </td>
+
+            <td>
+              ${Number(
+                c.actual_weight ||
+                c.expected_weight ||
+                0
+              ).toFixed(2)}
+              kg
+            </td>
+
+            <td>
+
+              <button
+                onclick="printSticker('${c.id}')"
+              >
+                Print
+              </button>
+
+            </td>
+
+          </tr>
+
+        `).join("")}
+
+      </table>
+
+    </div>
+
+  `);
+
+}
 /* HELPERS */
 
 function saveLocal() {
