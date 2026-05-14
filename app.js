@@ -448,6 +448,9 @@ function getNextOrderNo() {
   return String(next).padStart(2, "0");
 }
 
+function saveOrder() {
+  const party = val("party");
+
   if (!party) return alert("Party required");
   if (!state.orderDraftItems.length) return alert("Add at least one item");
 
@@ -459,6 +462,9 @@ function getNextOrderNo() {
   });
 
   state.orderDraftItems = [];
+  window.currentParty = "";
+  window.selectedSku = null;
+
   saveLocal();
 
   alert("Order saved");
