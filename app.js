@@ -443,14 +443,16 @@ function deleteOrderDraftItem(i) {
   renderOrders();
 }
 
-function saveOrder() {
-  const party = val("party");
+function getNextOrderNo() {
+  const next = state.orders.length + 1;
+  return String(next).padStart(2, "0");
+}
 
   if (!party) return alert("Party required");
   if (!state.orderDraftItems.length) return alert("Add at least one item");
 
   state.orders.push({
-    id: Date.now(),
+    id: getNextOrderNo(),
     party,
     items: state.orderDraftItems,
     created_at: new Date().toLocaleString()
