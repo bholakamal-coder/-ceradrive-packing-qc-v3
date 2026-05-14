@@ -840,181 +840,78 @@ function renderQC() {
   `);
 }
 function renderQCOrderCards(party) {
+  const list = state.cartons.filter(c => c.party === party);
 
-  const list =
-    state.cartons.filter(
-      c => c.party === party
-    );
+  const pass = list.filter(c => c.status === "PASS").length;
+  const recheck = list.filter(c => c.status === "RECHECK").length;
+  const pending = list.filter(c => c.status === "PENDING_QC").length;
 
-  const pass =
-    list.filter(
-      c => c.status === "PASS"
-    ).length;
-
-  const recheck =
-    list.filter(
-      c => c.status === "RECHECK"
-    ).length;
-
-  const pending =
-    list.filter(
-      c => c.status === "PENDING_QC"
-    ).length;
-
-  document.getElementById(
-    "qcCartons"
-  ).innerHTML = `
-
+  document.getElementById("qcCartons").innerHTML = `
     <div class="info">
-
-      <b>Party:</b>
-      ${escapeHTML(party)}
-
-      <br>
-
-      <b>Total Cartons:</b>
-      ${list.length}
-
-      <br>
-
-      <b>Pending:</b>
-      ${pending}
-
-      |
-
-      <b>PASS:</b>
-      ${pass}
-
-      |
-
-      <b>RECHECK:</b>
-      ${recheck}
-
+      <b>Party:</b> ${escapeHTML(party)}<br>
+      <b>Total Cartons:</b> ${list.length}<br>
+      <b>Pending:</b> ${pending} |
+      <b>PASS:</b> ${pass} |
+      <b>RECHECK:</b> ${recheck}
     </div>
 
     ${list.map((c, index) => {
+      const sets = (c.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
+      const tare = Number(c.outer_weight || 0);
+      const gross = Number(c.expected_weight || 0);
+      const net = gross - tare;
 
-      const sets =
-        (c.items || [])
-        .reduce(
-          (s, i) =>
-            s + Number(i.qty || 0),
-          0
-        );
+      let badgeClass = "badgePending";
+      let badgeText = "NOT WEIGHED";
 
-      const tare =
-        Number(
-          c.outer_weight || 0
-        );
+      if (c.status === "PASS") {
+        badgeClass = "badgePass";
+        badgeText = "PASS";
+      }
 
-      const gross =
-        Number(
-          c.expected_weight || 0
-        );
-
-      const net =
-        gross - tare;
+      if (c.status === "RECHECK") {
+        badgeClass = "badgeRecheck";
+        badgeText = "RECHECK";
+      }
 
       return `
-
         <div class="card">
-
           <div class="top">
-
             <div>
-
-              <h2>
-                ${escapeHTML(c.party)}
-                /
-                ${c.carton_no}
-              </h2>
-
-              <div>
-
-                ${sets} sets
-                •
-                Expected
-                ${gross.toFixed(2)} kg
-
-              </div>
-
-              <div>
-
-                Net
-                ${net.toFixed(2)}
-
-                +
-                Tare
-                ${tare.toFixed(2)}
-
-              </div>
-
+              <h2>${escapeHTML(c.party)} / ${c.carton_no}</h2>
+              <div>${sets} sets • Expected ${gross.toFixed(2)} kg</div>
+              <div>Net ${net.toFixed(2)} + Tare ${tare.toFixed(2)}</div>
             </div>
 
             <div>
-
-              <h2>
-
-                ${c.status === "PENDING_QC"
-                  ? "NOT WEIGHED"
-                  : c.status}
-
-              </h2>
-
+              <span class="${badgeClass}">
+                ${badgeText}
+              </span>
             </div>
-
           </div>
 
-          <h3>
-            Actual Weight
-          </h3>
+          <h3>Actual Weight</h3>
 
           <input
-
             id="qc_${c.id}"
-
             type="number"
-
             step="0.01"
-
             placeholder="kg"
-
-            value="${
-              c.actual_weight || ""
-            }"
-
-            onkeydown="
-              if(event.key==='Enter'){
-                quickQC(
-                  '${c.id}',
-                  ${index}
-                )
-              }
-            "
-
+            value="${c.actual_weight || ""}"
+            onkeydown="if(event.key==='Enter'){quickQC('${c.id}', ${index})}"
           >
 
-          <div id="diff_${c.id}">
-
+          <div>
             Difference:
             ${
               c.actual_weight
-              ? (
-                  Number(
-                    c.actual_weight
-                  ) - gross
-                ).toFixed(2)
-              : "-"
+                ? (Number(c.actual_weight) - gross).toFixed(2)
+                : "-"
             }
-
           </div>
-
         </div>
-
       `;
-
     }).join("")}
-
   `;
 }
 function renderQCCartons(party) {
@@ -1268,6 +1165,29 @@ function injectStyle() {
       .row,.row3,.row4,.tabs,.grid4{grid-template-columns:1fr}
       .top{display:block}
     }
+    .badgePass{
+  background:#2e7d32;
+  color:white;
+  padding:8px 14px;
+  border-radius:20px;
+  font-size:14px;
+}
+
+.badgeRecheck{
+  background:#c62828;
+  color:white;
+  padding:8px 14px;
+  border-radius:20px;
+  font-size:14px;
+}
+
+.badgePending{
+  background:#f9a825;
+  color:#111;
+  padding:8px 14px;
+  border-radius:20px;
+  font-size:14px;
+}
   `;
 
   document.head.appendChild(style);
