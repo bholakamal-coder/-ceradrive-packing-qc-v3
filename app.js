@@ -909,6 +909,18 @@ function renderQCOrderCards(party) {
                 : "-"
             }
           </div>
+          ${
+  c.status === "PASS"
+    ? `
+      <button
+        class="green"
+        onclick="printSticker('${c.id}')"
+      >
+        Print Sticker
+      </button>
+    `
+    : ""
+}
         </div>
       `;
     }).join("")}
