@@ -1070,103 +1070,290 @@ function saveQC() {
 }
 function printSticker(id) {
 
-  const c =
+  const current =
     state.cartons.find(
       x => String(x.id) === String(id)
     );
 
-  if (!c) return;
+  if (!current) return;
+
+  const all =
+    state.cartons.filter(
+      x =>
+        x.party === current.party
+    );
 
   const html = `
-    <html>
-    <head>
-      <title>Sticker</title>
 
-      <style>
+  <html>
+
+  <head>
+
+    <title>Carton Stickers</title>
+
+    <style>
+
+      body{
+        margin:0;
+        padding:20px;
+        font-family:Arial;
+        background:#eee;
+      }
+
+      .sheet{
+        display:flex;
+        flex-wrap:wrap;
+        gap:20px;
+      }
+
+      .sticker{
+
+        width:100mm;
+        height:100mm;
+
+        background:white;
+
+        border:3px solid #111;
+        border-radius:12mm;
+
+        padding:8mm;
+
+        box-sizing:border-box;
+
+        page-break-inside:avoid;
+
+        position:relative;
+      }
+
+      .top{
+        display:flex;
+        justify-content:space-between;
+        align-items:flex-start;
+      }
+
+      .logo{
+        font-size:26px;
+        font-weight:bold;
+        color:#d11;
+      }
+
+      .carton{
+        text-align:right;
+      }
+
+      .cartonBig{
+        font-size:38px;
+        font-weight:bold;
+        line-height:1;
+      }
+
+      .cartonSmall{
+        font-size:20px;
+        font-weight:bold;
+      }
+
+      .grid{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:8px 20px;
+        margin-top:10px;
+        font-size:14px;
+      }
+
+      table{
+        width:100%;
+        border-collapse:collapse;
+        margin-top:10px;
+        font-size:12px;
+      }
+
+      th,td{
+        border:1px solid #111;
+        padding:4px;
+      }
+
+      .status{
+        margin-top:10px;
+        border:2px solid #111;
+        text-align:center;
+        padding:8px;
+        font-weight:bold;
+        font-size:20px;
+      }
+
+      .footer{
+        text-align:center;
+        margin-top:8px;
+        font-size:14px;
+        font-weight:bold;
+      }
+
+      @media print{
+
         body{
-          font-family:Arial;
-          padding:20px;
+          background:white;
+          padding:0;
+        }
+
+        .sheet{
+          gap:0;
         }
 
         .sticker{
-          width:350px;
-          border:2px solid #000;
-          padding:15px;
+          margin:0;
+          border-radius:0;
         }
 
-        h2{
-          margin:0 0 10px;
-          text-align:center;
-        }
+      }
 
-        table{
-          width:100%;
-          border-collapse:collapse;
-          margin-top:10px;
-        }
+    </style>
 
-        td,th{
-          border:1px solid #000;
-          padding:5px;
-          font-size:12px;
-        }
-      </style>
-    </head>
+  </head>
 
-    <body onload="window.print()">
+  <body onload="window.print()">
 
-      <div class="sticker">
+    <div class="sheet">
 
-        <h2>CERADRIVE</h2>
+      ${all.map(c => {
 
-        <b>Party:</b>
-        ${c.party}
-        <br>
+        const net =
+          Number(c.expected_weight || 0)
+          -
+          Number(c.outer_weight || 0);
 
-        <b>Carton:</b>
-        ${c.carton_no}/${c.total_cartons}
-        <br>
+        const sets =
+          (c.items || [])
+          .reduce(
+            (s, i) =>
+              s + Number(i.qty || 0),
+            0
+          );
 
-        <b>Expected:</b>
-        ${Number(c.expected_weight).toFixed(2)} kg
-        <br>
+        return `
 
-        <b>Actual:</b>
-        ${Number(c.actual_weight).toFixed(2)} kg
-        <br>
+        <div class="sticker">
 
-        <b>Status:</b>
-        ${c.status}
+          <div class="top">
 
-        <table>
-          <tr>
-            <th>Part</th>
-            <th>Qty</th>
-          </tr>
+            <div>
 
-          ${(c.items || []).map(i => `
+              <div class="logo">
+                CERADRIVE
+              </div>
+
+              <div>
+                BRAKES
+              </div>
+
+            </div>
+
+            <div class="carton">
+
+              <div class="cartonBig">
+                ${c.carton_no}
+              </div>
+
+              <div class="cartonSmall">
+                ${c.carton_no}/${c.total_cartons}
+              </div>
+
+            </div>
+
+          </div>
+
+          <div class="grid">
+
+            <div>
+              <b>CUSTOMER:</b>
+              ${c.party}
+            </div>
+
+            <div>
+              <b>Date:</b>
+              ${new Date().toLocaleDateString()}
+            </div>
+
+            <div>
+              <b>Sets:</b>
+              ${sets}
+            </div>
+
+            <div>
+              <b>Net Wt:</b>
+              ${net.toFixed(2)} kg
+            </div>
+
+            <div>
+              <b>Tare Wt:</b>
+              ${Number(c.outer_weight || 0).toFixed(2)} kg
+            </div>
+
+            <div>
+              <b>Gross Wt:</b>
+              ${Number(c.actual_weight || c.expected_weight || 0).toFixed(2)} kg
+            </div>
+
+          </div>
+
+          <table>
+
             <tr>
-              <td>${i.part_no}</td>
-              <td>${i.qty}</td>
+              <th>SKU</th>
+              <th>MODEL</th>
+              <th>QTY</th>
             </tr>
-          `).join("")}
 
-        </table>
+            ${(c.items || []).map(i => `
 
-      </div>
+              <tr>
 
-    </body>
-    </html>
+                <td>
+                  ${i.part_no}
+                </td>
+
+                <td>
+                  ${i.model}
+                </td>
+
+                <td>
+                  ${i.qty}
+                </td>
+
+              </tr>
+
+            `).join("")}
+
+          </table>
+
+          <div class="status">
+            ${c.status}
+          </div>
+
+          <div class="footer">
+            Reliable Braking, Always.
+          </div>
+
+        </div>
+
+        `;
+
+      }).join("")}
+
+    </div>
+
+  </body>
+
+  </html>
   `;
 
   const w =
     window.open(
       "",
-      "_blank",
-      "width=400,height=600"
+      "_blank"
     );
 
   w.document.write(html);
+
   w.document.close();
 
 }
