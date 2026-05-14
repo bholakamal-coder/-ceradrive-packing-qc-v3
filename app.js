@@ -839,7 +839,184 @@ function renderQC() {
     </div>
   `);
 }
+function renderQCOrderCards(party) {
 
+  const list =
+    state.cartons.filter(
+      c => c.party === party
+    );
+
+  const pass =
+    list.filter(
+      c => c.status === "PASS"
+    ).length;
+
+  const recheck =
+    list.filter(
+      c => c.status === "RECHECK"
+    ).length;
+
+  const pending =
+    list.filter(
+      c => c.status === "PENDING_QC"
+    ).length;
+
+  document.getElementById(
+    "qcCartons"
+  ).innerHTML = `
+
+    <div class="info">
+
+      <b>Party:</b>
+      ${escapeHTML(party)}
+
+      <br>
+
+      <b>Total Cartons:</b>
+      ${list.length}
+
+      <br>
+
+      <b>Pending:</b>
+      ${pending}
+
+      |
+
+      <b>PASS:</b>
+      ${pass}
+
+      |
+
+      <b>RECHECK:</b>
+      ${recheck}
+
+    </div>
+
+    ${list.map((c, index) => {
+
+      const sets =
+        (c.items || [])
+        .reduce(
+          (s, i) =>
+            s + Number(i.qty || 0),
+          0
+        );
+
+      const tare =
+        Number(
+          c.outer_weight || 0
+        );
+
+      const gross =
+        Number(
+          c.expected_weight || 0
+        );
+
+      const net =
+        gross - tare;
+
+      return `
+
+        <div class="card">
+
+          <div class="top">
+
+            <div>
+
+              <h2>
+                ${escapeHTML(c.party)}
+                /
+                ${c.carton_no}
+              </h2>
+
+              <div>
+
+                ${sets} sets
+                •
+                Expected
+                ${gross.toFixed(2)} kg
+
+              </div>
+
+              <div>
+
+                Net
+                ${net.toFixed(2)}
+
+                +
+                Tare
+                ${tare.toFixed(2)}
+
+              </div>
+
+            </div>
+
+            <div>
+
+              <h2>
+
+                ${c.status === "PENDING_QC"
+                  ? "NOT WEIGHED"
+                  : c.status}
+
+              </h2>
+
+            </div>
+
+          </div>
+
+          <h3>
+            Actual Weight
+          </h3>
+
+          <input
+
+            id="qc_${c.id}"
+
+            type="number"
+
+            step="0.01"
+
+            placeholder="kg"
+
+            value="${
+              c.actual_weight || ""
+            }"
+
+            onkeydown="
+              if(event.key==='Enter'){
+                quickQC(
+                  '${c.id}',
+                  ${index}
+                )
+              }
+            "
+
+          >
+
+          <div id="diff_${c.id}">
+
+            Difference:
+            ${
+              c.actual_weight
+              ? (
+                  Number(
+                    c.actual_weight
+                  ) - gross
+                ).toFixed(2)
+              : "-"
+            }
+
+          </div>
+
+        </div>
+
+      `;
+
+    }).join("")}
+
+  `;
+}
 function renderQCCartons(party) {
   const list = state.cartons.filter(c => c.party === party);
 
@@ -904,7 +1081,68 @@ function renderQCDetails() {
     ${c.status === "PASS" ? stickerHTML(c) : `<p class="bad">Sticker only after PASS</p>`}
   `;
 }
+function quickQC(id, index) {
 
+  const c =
+    state.cartons.find(
+      x => String(x.id) === String(id)
+    );
+
+  if (!c) return;
+
+  const input =
+    document.getElementById(
+      "qc_" + id
+    );
+
+  if (!input) return;
+
+  const actual =
+    Number(input.value);
+
+  if (!actual) return;
+
+  const diff =
+    Math.abs(
+      actual -
+      Number(
+        c.expected_weight || 0
+      )
+    );
+
+  c.actual_weight =
+    actual;
+
+  c.status =
+    diff <= 0.30
+      ? "PASS"
+      : "RECHECK";
+
+  saveLocal();
+
+  renderQCOrderCards(c.party);
+
+  setTimeout(() => {
+
+    const all =
+      document.querySelectorAll(
+        '[id^="qc_"]'
+      );
+
+    const next =
+      all[index + 1];
+
+    if (next) {
+
+      next.focus();
+
+      next.select();
+
+    }
+
+  }, 50);
+
+}
 function saveQC() {
   const c = getSelectedCarton();
   if (!c) return;
