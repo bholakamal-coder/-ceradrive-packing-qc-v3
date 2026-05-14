@@ -1073,60 +1073,36 @@ function saveQC() {
   renderQCDetails();
 }
 function printSticker(id) {
-
-  const current =
-    state.cartons.find(
-      x => String(x.id) === String(id)
-    );
-
+  const current = state.cartons.find(x => String(x.id) === String(id));
   if (!current) return;
 
-  const all =
-    state.cartons.filter(
-      x =>
-        x.party === current.party
-    );
+  const branding = document.getElementById("brandToggle")?.checked;
+
+  const all = state.cartons.filter(x => x.party === current.party);
 
   const html = `
-
   <html>
-
   <head>
-
     <title>Carton Stickers</title>
 
     <style>
-
       body{
         margin:0;
-        padding:20px;
+        padding:0;
         font-family:Arial;
-        background:#eee;
-      }
-
-      .sheet{
-        display:flex;
-        flex-wrap:wrap;
-        gap:20px;
+        background:white;
       }
 
       .sticker{
-
         width:100mm;
         height:100mm;
-
         background:white;
-
         border:3px solid #111;
-        border-radius:12mm;
-
-        padding:8mm;
-
+        border-radius:8mm;
+        padding:7mm;
         box-sizing:border-box;
-
-        page-break-inside:avoid;
-
-        position:relative;
+        page-break-after:always;
+        overflow:hidden;
       }
 
       .top{
@@ -1135,10 +1111,18 @@ function printSticker(id) {
         align-items:flex-start;
       }
 
-      .logo{
+      .brand{
         font-size:26px;
         font-weight:bold;
         color:#d11;
+        line-height:1;
+      }
+
+      .brandSmall{
+        font-size:11px;
+        letter-spacing:5px;
+        color:#111;
+        margin-top:3px;
       }
 
       .carton{
@@ -1146,29 +1130,29 @@ function printSticker(id) {
       }
 
       .cartonBig{
-        font-size:38px;
+        font-size:40px;
         font-weight:bold;
         line-height:1;
       }
 
       .cartonSmall{
-        font-size:20px;
+        font-size:22px;
         font-weight:bold;
       }
 
       .grid{
         display:grid;
         grid-template-columns:1fr 1fr;
-        gap:8px 20px;
-        margin-top:10px;
+        gap:6px 18px;
+        margin-top:9px;
         font-size:14px;
       }
 
       table{
         width:100%;
         border-collapse:collapse;
-        margin-top:10px;
-        font-size:12px;
+        margin-top:9px;
+        font-size:11px;
       }
 
       th,td{
@@ -1176,131 +1160,86 @@ function printSticker(id) {
         padding:4px;
       }
 
+      th{
+        font-weight:bold;
+        text-align:center;
+      }
+
       .status{
-        margin-top:10px;
+        margin-top:8px;
         border:2px solid #111;
         text-align:center;
-        padding:8px;
+        padding:7px;
         font-weight:bold;
-        font-size:20px;
+        font-size:19px;
       }
 
       .footer{
         text-align:center;
-        margin-top:8px;
+        margin-top:7px;
         font-size:14px;
         font-weight:bold;
       }
 
       @media print{
+        @page{
+          size:100mm 100mm;
+          margin:0;
+        }
 
         body{
-          background:white;
+          margin:0;
           padding:0;
         }
 
-        .sheet{
-          gap:0;
-        }
-
         .sticker{
-          margin:0;
           border-radius:0;
+          margin:0;
         }
-
       }
-
     </style>
-
   </head>
 
   <body onload="window.print()">
+    ${all.map(c => {
+      const tare = Number(c.outer_weight || 0);
+      const gross = Number(c.actual_weight || c.expected_weight || 0);
+      const net = gross - tare;
 
-    <div class="sheet">
+      const sets = (c.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
 
-      ${all.map(c => {
-
-        const net =
-          Number(c.expected_weight || 0)
-          -
-          Number(c.outer_weight || 0);
-
-        const sets =
-          (c.items || [])
-          .reduce(
-            (s, i) =>
-              s + Number(i.qty || 0),
-            0
-          );
-
-        return `
-
+      return `
         <div class="sticker">
-
           <div class="top">
-
             <div>
-
-              <div class="logo">
-                CERADRIVE
-              </div>
-
-              <div>
-                BRAKES
-              </div>
-
+              ${
+                branding
+                  ? `
+                    <div class="brand">ceradrive®</div>
+                    <div class="brandSmall">BRAKES</div>
+                  `
+                  : `<div style="height:36px;"></div>`
+              }
             </div>
 
             <div class="carton">
-
-              <div class="cartonBig">
-                ${c.carton_no}
-              </div>
-
-              <div class="cartonSmall">
-                ${c.carton_no}/${c.total_cartons}
-              </div>
-
+              <span class="cartonBig">${c.carton_no}</span>
+              <span class="cartonSmall">${c.carton_no}/${c.total_cartons}</span>
             </div>
-
           </div>
 
           <div class="grid">
+            <div><b>CUSTOMER:</b> ${escapeHTML(c.party).toUpperCase()}</div>
+            <div><b>Date:</b> ${new Date().toLocaleDateString()}</div>
 
-            <div>
-              <b>CUSTOMER:</b>
-              ${c.party}
-            </div>
+            <div><b>Sets:</b> ${sets}</div>
+            <div><b>Net Wt:</b> ${net.toFixed(2)} kg</div>
 
-            <div>
-              <b>Date:</b>
-              ${new Date().toLocaleDateString()}
-            </div>
-
-            <div>
-              <b>Sets:</b>
-              ${sets}
-            </div>
-
-            <div>
-              <b>Net Wt:</b>
-              ${net.toFixed(2)} kg
-            </div>
-
-            <div>
-              <b>Tare Wt:</b>
-              ${Number(c.outer_weight || 0).toFixed(2)} kg
-            </div>
-
-            <div>
-              <b>Gross Wt:</b>
-              ${Number(c.actual_weight || c.expected_weight || 0).toFixed(2)} kg
-            </div>
-
+            <div><b>Tare Wt:</b> ${tare.toFixed(2)} kg</div>
+            <div><b>Gross Wt:</b> ${gross.toFixed(2)} kg</div>
           </div>
 
           <table>
-
             <tr>
               <th>SKU</th>
               <th>MODEL</th>
@@ -1308,58 +1247,33 @@ function printSticker(id) {
             </tr>
 
             ${(c.items || []).map(i => `
-
               <tr>
-
-                <td>
-                  ${i.part_no}
-                </td>
-
-                <td>
-                  ${i.model}
-                </td>
-
-                <td>
-                  ${i.qty}
-                </td>
-
+                <td>${escapeHTML(i.part_no)}</td>
+                <td>${escapeHTML(i.model)}</td>
+                <td>${i.qty}</td>
               </tr>
-
             `).join("")}
-
           </table>
 
           <div class="status">
-            ${c.status}
+            ${c.status === "PENDING_QC" ? "NOT WEIGHED" : c.status}
           </div>
 
-          <div class="footer">
-            Reliable Braking, Always.
-          </div>
-
+          ${
+            branding
+              ? `<div class="footer">Reliable Braking, Always.</div>`
+              : `<div class="footer">&nbsp;</div>`
+          }
         </div>
-
-        `;
-
-      }).join("")}
-
-    </div>
-
+      `;
+    }).join("")}
   </body>
-
   </html>
   `;
 
-  const w =
-    window.open(
-      "",
-      "_blank"
-    );
-
+  const w = window.open("", "_blank");
   w.document.write(html);
-
   w.document.close();
-
 }
 function stickerHTML(c) {
   return `
