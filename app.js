@@ -30,7 +30,8 @@ async function init() {
   }
 
   await loadSkus();
-  renderApp();
+await loadOnlineCartons();
+renderApp();
 }
 
 /* API */
@@ -1376,11 +1377,40 @@ function renderSaved() {
 
 }
 
-function saveLocal() {
-  localStorage.setItem("orders_v5_full", JSON.stringify(state.orders));
-  localStorage.setItem("cartons_v5_full", JSON.stringify(state.cartons));
-}
+async function saveLocal() {
+  localStorage.setItem("ceradrive_state", JSON.stringify(state));
 
+  try {
+    await fetch("/api/cartons", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        cartons: state.cartons || []
+      })
+    });
+  } catch (e) {
+    console.log("Online save failed");
+  }
+}
+async function loadOnlineCartons() {
+  try {
+    const res = await fetch("/api/cartons");
+    const data = await res.json();
+
+    if (data.ok && Array.isArray(data.cartons)) {
+      state.cartons = data.cartons;
+
+      localStorage.setItem(
+        "ceradrive_state",
+        JSON.stringify(state)
+      );
+    }
+  } catch (e) {
+    console.log("Online load failed", e);
+  }
+}
 function moveNext(e, nextId) {
   if (e.key !== "Enter") return;
   e.preventDefault();
