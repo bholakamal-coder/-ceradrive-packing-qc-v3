@@ -822,17 +822,20 @@ function renderQC() {
 
   main(`
     <div class="card">
-      <h2>QC</h2>
+      <h2>QC / Recheck</h2>
 
       ${!parties.length ? `<p>No cartons for QC.</p>` : `
-        <select onchange="renderQCCartons(this.value)">
+        <select onchange="renderQCOrderCards(this.value)">
           <option value="">Select Party</option>
-          ${parties.map(p => `<option value="${escapeHTML(p)}">${escapeHTML(p)}</option>`).join("")}
+          ${parties.map(p => `
+            <option value="${escapeHTML(p)}">
+              ${escapeHTML(p)}
+            </option>
+          `).join("")}
         </select>
       `}
 
       <div id="qcCartons"></div>
-      <div id="qcDetails"></div>
     </div>
   `);
 }
