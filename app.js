@@ -219,6 +219,7 @@ function renderOrders() {
         id="party"
         placeholder="Party Name"
         value="${savedParty}"
+        onkeydown="moveNext(event,'part')"
       >
 
       <div class="row3">
