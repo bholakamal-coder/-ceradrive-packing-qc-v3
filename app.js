@@ -909,21 +909,25 @@ function renderQCOrderCards(party) {
                 : "-"
             }
           </div>
-          ${
-  c.status === "PASS"
-    ? `
-      <button
-        class="green"
-        onclick="printSticker('${c.id}')"
-      >
-        Print Sticker
-      </button>
-    `
-    : ""
-}
         </div>
       `;
     }).join("")}
+
+    <div class="card">
+      <label style="display:flex;gap:10px;align-items:center;font-weight:bold;">
+        <input type="checkbox" id="brandToggle" checked style="width:auto;">
+        Ceradrive Branding
+      </label>
+
+      <p>Godex setup: Sticker size 100 × 100 mm, scale 100%, margins none.</p>
+
+      <button
+        class="green"
+        onclick="printSticker('${list[0]?.id}')"
+      >
+        Print All Stickers
+      </button>
+    </div>
   `;
 }
 function renderQCCartons(party) {
