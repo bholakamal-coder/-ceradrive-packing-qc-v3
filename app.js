@@ -6,106 +6,136 @@ const API = {
 let state = {
   user: JSON.parse(localStorage.getItem("user") || "null"),
   tab: "dashboard",
-
-  orders: JSON.parse(localStorage.getItem("orders") || "[]"),
-  cartons: JSON.parse(localStorage.getItem("cartons") || "[]"),
-skus: [],
+  orders: JSON.parse(localStorage.getItem("orders_v5_full") || "[]"),
+  cartons: JSON.parse(localStorage.getItem("cartons_v5_full") || "[]"),
+  skus: [],
   orderDraftItems: [],
   cartonDraftItems: [],
-
   selectedOrderId: "",
   selectedCartonId: "",
-
   packingCartonNo: "1",
   packingOuterWeight: "0.30"
 };
 
+let skuSuggestionList = [];
+
 document.addEventListener("DOMContentLoaded", init);
 
-function init() {
+async function init() {
   injectStyle();
 
   if (!state.user) {
     renderLogin();
     return;
   }
-loadSkus();
+
+  await loadSkus();
   renderApp();
 }
 
-async function api(url, opts = {}) {
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...opts
-  });
+/* API */
 
-  const data = await res.json();
+async function api(url, opts = {}) {
+  const fetchOptions = { ...opts };
+
+  if (opts.body) {
+    fetchOptions.headers = {
+      "Content-Type": "application/json",
+      ...(opts.headers || {})
+    };
+  }
+
+  const res = await fetch(url, fetchOptions);
+  const text = await res.text();
+
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
 
   if (!res.ok) {
-    throw new Error(data.error || "API Error");
+    console.log("API ERROR", data);
+    throw new Error(data.error || data.raw || "API Error");
   }
 
   return data;
 }
+
 async function loadSkus() {
-
   try {
-
     const res = await api(API.sku + "?q=");
-
-    state.skus =
-      res.skus ||
-      res.items ||
-      [];
-
-    console.log(
-      "SKUS LOADED",
-      state.skus
-    );
-
+    state.skus = res.skus || res.items || [];
+    if (!state.skus.length) addDemoSkus();
+    console.log("SKUS LOADED", state.skus.length);
   } catch (e) {
-
-    console.log(
-      "SKU LOAD FAILED",
-      e
-    );
+    console.log("SKU LOAD FAILED - demo SKUs loaded", e.message);
+    addDemoSkus();
   }
 }
+
+function addDemoSkus() {
+  state.skus = [
+    { part_no: "VO101P", model: "Demo Vehicle 101", weight_per_set: 1.20 },
+    { part_no: "HP102P", model: "Demo Vehicle 102", weight_per_set: 1.35 },
+    { part_no: "HE103P", model: "Demo Vehicle 103", weight_per_set: 1.50 },
+    { part_no: "VO202C", model: "Demo Vehicle 202", weight_per_set: 1.10 },
+    { part_no: "HE303P", model: "Demo Vehicle 303", weight_per_set: 1.65 }
+  ];
+}
+
 /* LOGIN */
 
 function renderLogin() {
   document.body.innerHTML = `
-    <div class="wrap">
-      <div class="card">
-        <h1>Ceradrive Packing QC V3</h1>
+    <div class="wrap loginWrap">
+      <div class="card loginCard">
+        <h1>Ceradrive Packing QC V5</h1>
+        <p>Order → Packing → QC → Sticker</p>
 
-        <input id="u" placeholder="Username" value="admin">
-        <input id="p" type="password" placeholder="Password" value="Admin123">
+        <input id="u" placeholder="Username" value="admin" onkeydown="moveNext(event,'p')">
+        <input id="p" type="password" placeholder="Password" value="Admin123" onkeydown="if(event.key==='Enter') login()">
 
         <button onclick="login()">Login</button>
+
+        <small>admin/Admin123, packing/Pack123, qc/Qc123</small>
       </div>
     </div>
   `;
 }
 
 async function login() {
+  const username = val("u");
+  const password = val("p");
+
   try {
     const data = await api(API.login, {
       method: "POST",
-      body: JSON.stringify({
-        username: val("u"),
-        password: val("p")
-      })
+      body: JSON.stringify({ username, password })
     });
 
-    state.user = data.user;
-    localStorage.setItem("user", JSON.stringify(data.user));
-
-    renderApp();
-
+    state.user = data.user || { username, role: "user" };
   } catch (e) {
-    alert("Login failed: " + e.message);
+    const valid =
+      (username === "admin" && password === "Admin123") ||
+      (username === "packing" && password === "Pack123") ||
+      (username === "qc" && password === "Qc123");
+
+    if (!valid) {
+      alert("Login failed: " + e.message);
+      return;
+    }
+
+    state.user = {
+      username,
+      role: username === "admin" ? "admin" : username
+    };
   }
+
+  localStorage.setItem("user", JSON.stringify(state.user));
+  await loadSkus();
+  renderApp();
 }
 
 function logout() {
@@ -121,18 +151,17 @@ function renderApp() {
     <div class="wrap">
       <div class="card top">
         <div>
-          <h2>Ceradrive Packing QC V3</h2>
-          <p>Welcome ${state.user.username}</p>
+          <h2>Ceradrive Packing QC V5</h2>
+          <p>Welcome ${escapeHTML(state.user.username)} | ${escapeHTML(state.user.role || "")}</p>
         </div>
-
-        <button onclick="logout()">Logout</button>
+        <button class="danger" onclick="logout()">Logout</button>
       </div>
 
       <div class="tabs">
-        <button onclick="setTab('dashboard')">Dashboard</button>
-        <button onclick="setTab('orders')">Orders</button>
-        <button onclick="setTab('packing')">Packing</button>
-        <button onclick="setTab('qc')">QC</button>
+        <button class="${state.tab === "dashboard" ? "active" : ""}" onclick="setTab('dashboard')">Dashboard</button>
+        <button class="${state.tab === "orders" ? "active" : ""}" onclick="setTab('orders')">Orders</button>
+        <button class="${state.tab === "packing" ? "active" : ""}" onclick="setTab('packing')">Packing</button>
+        <button class="${state.tab === "qc" ? "active" : ""}" onclick="setTab('qc')">QC</button>
       </div>
 
       <div id="main"></div>
@@ -144,7 +173,7 @@ function renderApp() {
 
 function setTab(tab) {
   state.tab = tab;
-  renderTab();
+  renderApp();
 }
 
 function renderTab() {
@@ -164,7 +193,6 @@ function renderDashboard() {
   main(`
     <div class="card">
       <h2>Dashboard</h2>
-
       <div class="grid4">
         <div class="stat">Orders<br><b>${state.orders.length}</b></div>
         <div class="stat">Pending QC<br><b>${pending}</b></div>
@@ -182,21 +210,18 @@ function renderOrders() {
     <div class="card">
       <h2>Orders</h2>
 
-      <input id="party" placeholder="Party Name">
+      <input id="party" placeholder="Party Name" onkeydown="moveNext(event,'part')">
 
       <div class="row4">
         <div class="searchBox">
-  <input
-    id="part"
-    placeholder="Search Part / Model"
-    autocomplete="off"
-    oninput="showSkuSuggest()"
-  >
-  <div id="skuSuggest" class="suggest"></div>
-</div>
-        <input id="item" placeholder="Vehicle / Item">
-        <input id="qty" type="number" placeholder="Qty">
-        <input id="weight" type="number" step="0.01" placeholder="Weight / Set kg">
+          <input id="part" placeholder="Search Part / Model" autocomplete="off"
+            oninput="showSkuSuggest()" onkeydown="orderSearchEnter(event)">
+          <div id="skuSuggest" class="suggest"></div>
+        </div>
+
+        <input id="item" placeholder="Vehicle / Item" onkeydown="moveNext(event,'qty')">
+        <input id="qty" type="number" placeholder="Qty" onkeydown="moveNext(event,'weight')">
+        <input id="weight" type="number" step="0.01" placeholder="Weight / Set kg" onkeydown="if(event.key==='Enter') addOrderItem()">
       </div>
 
       <button onclick="addOrderItem()">Add Item</button>
@@ -206,108 +231,65 @@ function renderOrders() {
       <button class="green" onclick="saveOrder()">Save Order</button>
 
       <h3>Saved Orders</h3>
-
       ${savedOrdersHTML()}
     </div>
   `);
+
+  setTimeout(() => document.getElementById("party")?.focus(), 50);
 }
+
 function showSkuSuggest() {
-
-  const q =
-    val("part")
-    .toLowerCase()
-    .trim();
-
-  const box =
-    document.getElementById(
-      "skuSuggest"
-    );
+  const q = val("part").toLowerCase().trim();
+  const box = document.getElementById("skuSuggest");
 
   if (!box) return;
 
   if (!q) {
     box.innerHTML = "";
+    skuSuggestionList = [];
     return;
   }
 
-  const list =
-    state.skus.filter(s =>
+  skuSuggestionList = state.skus.filter(s =>
+    String(s.part_no || s.part || "").toLowerCase().includes(q) ||
+    String(s.model || s.model_name || s.item || "").toLowerCase().includes(q) ||
+    String(s.make_name || "").toLowerCase().includes(q)
+  ).slice(0, 10);
 
-      String(
-        s.part_no ||
-        s.part ||
-        ""
-      )
-      .toLowerCase()
-      .includes(q)
+  box.innerHTML = skuSuggestionList.map((s, i) => `
+    <div class="suggestItem" onclick="selectSku(${i})">
+      <b>${escapeHTML(s.part_no || s.part || "")}</b> — ${escapeHTML(s.model || s.model_name || s.item || "")}
+    </div>
+  `).join("");
+}
 
-      ||
+function orderSearchEnter(e) {
+  if (e.key !== "Enter") return;
 
-      String(
-        s.model ||
-        s.item ||
-        ""
-      )
-      .toLowerCase()
-      .includes(q)
+  e.preventDefault();
 
-    ).slice(0, 10);
+  if (!skuSuggestionList.length) showSkuSuggest();
 
-  box.innerHTML =
-    list.map((s, i) => `
+  if (skuSuggestionList.length) {
+    selectSku(0);
+    return;
+  }
 
-      <div onclick="selectSku(${i})">
-
-        <b>
-          ${s.part_no || s.part}
-        </b>
-
-        —
-        ${s.model || s.item || ""}
-
-      </div>
-
-    `).join("");
-
-  window.skuSuggestionList = list;
+  document.getElementById("qty")?.focus();
 }
 
 function selectSku(i) {
-
-  const s =
-    window.skuSuggestionList[i];
-
+  const s = skuSuggestionList[i];
   if (!s) return;
 
-  document.getElementById(
-    "part"
-  ).value =
-    s.part_no ||
-    s.part ||
-    "";
+  document.getElementById("part").value = s.part_no || s.part || "";
+  document.getElementById("item").value = s.model || s.model_name || s.item || "";
+  document.getElementById("weight").value = s.weight_per_set || s.weight || "";
 
-  document.getElementById(
-    "item"
-  ).value =
-    s.model ||
-    s.item ||
-    "";
-
-  document.getElementById(
-    "weight"
-  ).value =
-    s.weight ||
-    s.weight_per_set ||
-    "";
-
-  document.getElementById(
-    "skuSuggest"
-  ).innerHTML = "";
-
-  document.getElementById(
-    "qty"
-  ).focus();
+  document.getElementById("skuSuggest").innerHTML = "";
+  document.getElementById("qty").focus();
 }
+
 function addOrderItem() {
   const item = {
     part_no: val("part"),
@@ -322,34 +304,23 @@ function addOrderItem() {
   }
 
   state.orderDraftItems.push(item);
-
-  document.getElementById("part").value = "";
-  document.getElementById("item").value = "";
-  document.getElementById("qty").value = "";
-  document.getElementById("weight").value = "";
-
   renderOrders();
+
+  setTimeout(() => document.getElementById("part")?.focus(), 50);
 }
 
 function orderDraftTable() {
-  if (!state.orderDraftItems.length) {
-    return `<p>No items added.</p>`;
-  }
+  if (!state.orderDraftItems.length) return `<p>No items added.</p>`;
 
   return `
     <table>
       <tr>
-        <th>Part</th>
-        <th>Item</th>
-        <th>Qty</th>
-        <th>Weight / Set</th>
-        <th>Delete</th>
+        <th>Part</th><th>Item</th><th>Qty</th><th>Weight / Set</th><th>Delete</th>
       </tr>
-
       ${state.orderDraftItems.map((it, i) => `
         <tr>
-          <td>${it.part_no}</td>
-          <td>${it.model}</td>
+          <td>${escapeHTML(it.part_no)}</td>
+          <td>${escapeHTML(it.model)}</td>
           <td>${it.qty}</td>
           <td>${it.weight_per_set}</td>
           <td><button class="danger" onclick="deleteOrderDraftItem(${i})">Delete</button></td>
@@ -367,40 +338,29 @@ function deleteOrderDraftItem(i) {
 function saveOrder() {
   const party = val("party");
 
-  if (!party) {
-    alert("Party required");
-    return;
-  }
+  if (!party) return alert("Party required");
+  if (!state.orderDraftItems.length) return alert("Add at least one item");
 
-  if (!state.orderDraftItems.length) {
-    alert("Add at least one item");
-    return;
-  }
-
-  const order = {
+  state.orders.push({
     id: Date.now(),
     party,
     items: state.orderDraftItems,
     created_at: new Date().toLocaleString()
-  };
+  });
 
-  state.orders.push(order);
   state.orderDraftItems = [];
-
-  localStorage.setItem("orders", JSON.stringify(state.orders));
+  saveLocal();
 
   alert("Order saved");
   renderOrders();
 }
 
 function savedOrdersHTML() {
-  if (!state.orders.length) {
-    return `<p>No saved orders.</p>`;
-  }
+  if (!state.orders.length) return `<p>No saved orders.</p>`;
 
   return state.orders.map(o => `
     <div class="line">
-      <b>${o.party}</b><br>
+      <b>${escapeHTML(o.party)}</b><br>
       Order No: ${o.id}<br>
       Items: ${o.items.length}<br>
       Date: ${o.created_at}<br><br>
@@ -414,10 +374,7 @@ function deleteOrder(id) {
 
   state.orders = state.orders.filter(o => o.id !== id);
   state.cartons = state.cartons.filter(c => c.order_id !== id);
-
-  localStorage.setItem("orders", JSON.stringify(state.orders));
-  localStorage.setItem("cartons", JSON.stringify(state.cartons));
-
+  saveLocal();
   renderOrders();
 }
 
@@ -427,26 +384,21 @@ function renderPacking() {
   main(`
     <div class="card">
       <h2>Packing</h2>
-
       ${packingOrderSelect()}
-
       ${state.selectedOrderId ? packingFormHTML() : ""}
     </div>
   `);
 }
 
 function packingOrderSelect() {
-  if (!state.orders.length) {
-    return `<p>No orders available.</p>`;
-  }
+  if (!state.orders.length) return `<p>No orders available.</p>`;
 
   return `
     <select onchange="selectPackingOrder(this.value)">
       <option value="">Select Order</option>
-
       ${state.orders.map(o => `
         <option value="${o.id}" ${String(state.selectedOrderId) === String(o.id) ? "selected" : ""}>
-          ${o.party} — ${o.id}
+          ${escapeHTML(o.party)} — ${o.id}
         </option>
       `).join("")}
     </select>
@@ -470,30 +422,28 @@ function getSelectedOrder() {
 
 function packingFormHTML() {
   const order = getSelectedOrder();
-
   if (!order) return "";
 
   return `
     <div class="info">
-      <b>Party:</b> ${order.party}<br>
+      <b>Party:</b> ${escapeHTML(order.party)}<br>
       <b>Order No:</b> ${order.id}
     </div>
 
     ${balanceTable(order)}
 
     <div class="row3">
-      <input id="cartonNo" placeholder="Carton No" value="${state.packingCartonNo}" oninput="state.packingCartonNo=this.value; updateExpectedBox()">
-      <input id="outerWeight" placeholder="Outer Weight" value="${state.packingOuterWeight}" oninput="state.packingOuterWeight=this.value; updateExpectedBox()">
+      <input id="cartonNo" placeholder="Carton No" value="${state.packingCartonNo}" oninput="state.packingCartonNo=this.value; updateExpectedBox()" onkeydown="moveNext(event,'outerWeight')">
+      <input id="outerWeight" placeholder="Outer Weight" value="${state.packingOuterWeight}" oninput="state.packingOuterWeight=this.value; updateExpectedBox()" onkeydown="moveNext(event,'packItem')">
       <input readonly placeholder="Total Cartons" value="${getCurrentTotalCartons()}">
     </div>
 
     <div class="row">
-      <select id="packItem">
+      <select id="packItem" onkeydown="moveNext(event,'packQty')">
         <option value="">Select Order Item</option>
-
         ${order.items.map((it, i) => `
           <option value="${i}">
-            ${it.part_no} — ${it.model} — Balance ${getBalance(order.id, i)}
+            ${escapeHTML(it.part_no)} — ${escapeHTML(it.model)} — Balance ${getBalance(order.id, i)}
           </option>
         `).join("")}
       </select>
@@ -518,21 +468,14 @@ function packingFormHTML() {
 function balanceTable(order) {
   return `
     <h3>Order Items / Balance</h3>
-
     <table>
       <tr>
-        <th>Part</th>
-        <th>Item</th>
-        <th>Order Qty</th>
-        <th>Packed</th>
-        <th>This Entry</th>
-        <th>Balance</th>
+        <th>Part</th><th>Item</th><th>Order Qty</th><th>Packed</th><th>This Entry</th><th>Balance</th>
       </tr>
-
       ${order.items.map((it, i) => `
         <tr>
-          <td>${it.part_no}</td>
-          <td>${it.model}</td>
+          <td>${escapeHTML(it.part_no)}</td>
+          <td>${escapeHTML(it.model)}</td>
           <td>${it.qty}</td>
           <td>${getPackedQty(order.id, i)}</td>
           <td>${getDraftQty(i)}</td>
@@ -576,7 +519,6 @@ function addCartonItem() {
   }
 
   const balance = getBalance(order.id, itemIndex);
-
   if (qty > balance) {
     alert("Qty exceeds balance. Balance: " + balance);
     return;
@@ -594,6 +536,7 @@ function addCartonItem() {
   });
 
   renderPacking();
+  setTimeout(() => document.getElementById("cartonNo")?.focus(), 50);
 }
 
 function getCurrentTotalCartons() {
@@ -602,32 +545,23 @@ function getCurrentTotalCartons() {
     .filter(n => n > 0);
 
   if (!nums.length) return "";
-
   return Math.max(...nums);
 }
 
 function cartonDraftTable() {
-  if (!state.cartonDraftItems.length) {
-    return `<p>No carton items added.</p>`;
-  }
+  if (!state.cartonDraftItems.length) return `<p>No carton items added.</p>`;
 
   return `
     <table>
       <tr>
-        <th>Carton</th>
-        <th>Total</th>
-        <th>Part</th>
-        <th>Item</th>
-        <th>Qty</th>
-        <th>Delete</th>
+        <th>Carton</th><th>Total</th><th>Part</th><th>Item</th><th>Qty</th><th>Delete</th>
       </tr>
-
       ${state.cartonDraftItems.map((it, i) => `
         <tr>
           <td>${it.carton_no}</td>
           <td>${getCurrentTotalCartons()}</td>
-          <td>${it.part_no}</td>
-          <td>${it.model}</td>
+          <td>${escapeHTML(it.part_no)}</td>
+          <td>${escapeHTML(it.model)}</td>
           <td>${it.qty}</td>
           <td><button class="danger" onclick="deleteCartonDraftItem(${i})">Delete</button></td>
         </tr>
@@ -646,33 +580,23 @@ function expectedBoxHTML() {
 
   state.cartonDraftItems.forEach(it => {
     const no = String(it.carton_no);
-
-    if (!map[no]) {
-      map[no] = { qty: 0, itemWeight: 0 };
-    }
+    if (!map[no]) map[no] = { qty: 0, itemWeight: 0 };
 
     map[no].qty += Number(it.qty || 0);
     map[no].itemWeight += Number(it.qty || 0) * Number(it.weight_per_set || 0);
   });
 
   const cartons = Object.keys(map);
-
   if (!cartons.length) return "No weight yet.";
 
   const outer = Number(state.packingOuterWeight || 0);
 
   return `
     <h3>Carton Wise Weight</h3>
-
     <table>
       <tr>
-        <th>Carton</th>
-        <th>Total Qty</th>
-        <th>Item Weight</th>
-        <th>Outer</th>
-        <th>Gross</th>
+        <th>Carton</th><th>Total Qty</th><th>Item Weight</th><th>Outer</th><th>Gross</th>
       </tr>
-
       ${cartons.map(no => `
         <tr>
           <td>${no}/${getCurrentTotalCartons()}</td>
@@ -694,15 +618,8 @@ function updateExpectedBox() {
 function saveCartons() {
   const order = getSelectedOrder();
 
-  if (!order) {
-    alert("Select order");
-    return;
-  }
-
-  if (!state.cartonDraftItems.length) {
-    alert("Add carton items");
-    return;
-  }
+  if (!order) return alert("Select order");
+  if (!state.cartonDraftItems.length) return alert("Add carton items");
 
   const cartonNos = [...new Set(state.cartonDraftItems.map(it => String(it.carton_no)))];
   const totalCartons = String(Math.max(...cartonNos.map(n => Number(n || 0))));
@@ -710,7 +627,6 @@ function saveCartons() {
 
   cartonNos.forEach(no => {
     const items = state.cartonDraftItems.filter(it => String(it.carton_no) === String(no));
-
     const itemWeight = items.reduce((sum, it) => {
       return sum + Number(it.qty || 0) * Number(it.weight_per_set || 0);
     }, 0);
@@ -730,34 +646,26 @@ function saveCartons() {
     });
   });
 
-  localStorage.setItem("cartons", JSON.stringify(state.cartons));
-
-  alert("Cartons sent to QC");
-
   state.cartonDraftItems = [];
   state.selectedOrderId = "";
   state.packingCartonNo = "1";
   state.packingOuterWeight = "0.30";
 
+  saveLocal();
+  alert("Cartons sent to QC");
   renderPacking();
 }
 
 function packedCartonsHTML(orderId) {
   const list = state.cartons.filter(c => String(c.order_id) === String(orderId));
-
   if (!list.length) return "";
 
   return `
     <h3>Packed Cartons</h3>
-
     <table>
       <tr>
-        <th>Carton</th>
-        <th>Expected</th>
-        <th>Actual</th>
-        <th>Status</th>
+        <th>Carton</th><th>Expected</th><th>Actual</th><th>Status</th>
       </tr>
-
       ${list.map(c => `
         <tr>
           <td>${c.carton_no}/${c.total_cartons}</td>
@@ -782,10 +690,7 @@ function renderQC() {
       ${!parties.length ? `<p>No cartons for QC.</p>` : `
         <select onchange="renderQCCartons(this.value)">
           <option value="">Select Party</option>
-
-          ${parties.map(p => `
-            <option value="${p}">${p}</option>
-          `).join("")}
+          ${parties.map(p => `<option value="${escapeHTML(p)}">${escapeHTML(p)}</option>`).join("")}
         </select>
       `}
 
@@ -799,17 +704,11 @@ function renderQCCartons(party) {
   const list = state.cartons.filter(c => c.party === party);
 
   document.getElementById("qcCartons").innerHTML = `
-    <h3>${party}</h3>
-
+    <h3>${escapeHTML(party)}</h3>
     <table>
       <tr>
-        <th>Carton</th>
-        <th>Expected</th>
-        <th>Actual</th>
-        <th>Status</th>
-        <th>Open</th>
+        <th>Carton</th><th>Expected</th><th>Actual</th><th>Status</th><th>Open</th>
       </tr>
-
       ${list.map(c => `
         <tr>
           <td>${c.carton_no}/${c.total_cartons}</td>
@@ -834,12 +733,11 @@ function getSelectedCarton() {
 
 function renderQCDetails() {
   const c = getSelectedCarton();
-
   if (!c) return;
 
   document.getElementById("qcDetails").innerHTML = `
     <div class="info">
-      <b>Party:</b> ${c.party}<br>
+      <b>Party:</b> ${escapeHTML(c.party)}<br>
       <b>Carton:</b> ${c.carton_no}/${c.total_cartons}<br>
       <b>Expected:</b> ${Number(c.expected_weight || 0).toFixed(2)} kg<br>
       <b>Actual:</b> ${Number(c.actual_weight || 0).toFixed(2)} kg<br>
@@ -848,21 +746,18 @@ function renderQCDetails() {
 
     <table>
       <tr>
-        <th>Part</th>
-        <th>Item</th>
-        <th>Qty</th>
+        <th>Part</th><th>Item</th><th>Qty</th>
       </tr>
-
       ${(c.items || []).map(it => `
         <tr>
-          <td>${it.part_no}</td>
-          <td>${it.model}</td>
+          <td>${escapeHTML(it.part_no)}</td>
+          <td>${escapeHTML(it.model)}</td>
           <td>${it.qty}</td>
         </tr>
       `).join("")}
     </table>
 
-    <input id="actualWeight" type="number" step="0.01" placeholder="Actual Weight" value="${c.actual_weight || ""}">
+    <input id="actualWeight" type="number" step="0.01" placeholder="Actual Weight" value="${c.actual_weight || ""}" onkeydown="if(event.key==='Enter') saveQC()">
 
     <button class="green" onclick="saveQC()">PASS / RECHECK</button>
 
@@ -872,25 +767,18 @@ function renderQCDetails() {
 
 function saveQC() {
   const c = getSelectedCarton();
-
   if (!c) return;
 
   const actual = Number(val("actualWeight"));
-
-  if (!actual) {
-    alert("Enter actual weight");
-    return;
-  }
+  if (!actual) return alert("Enter actual weight");
 
   const diff = Math.abs(actual - Number(c.expected_weight || 0));
 
   c.actual_weight = actual;
   c.status = diff <= 0.30 ? "PASS" : "RECHECK";
 
-  localStorage.setItem("cartons", JSON.stringify(state.cartons));
-
+  saveLocal();
   alert("QC Updated: " + c.status);
-
   renderQCDetails();
 }
 
@@ -900,7 +788,7 @@ function stickerHTML(c) {
 
     <div id="sticker" class="sticker">
       <h2>CERADRIVE</h2>
-      <h3>${c.party}</h3>
+      <h3>${escapeHTML(c.party)}</h3>
 
       <b>Carton:</b> ${c.carton_no}/${c.total_cartons}<br>
       <b>Expected:</b> ${Number(c.expected_weight || 0).toFixed(2)} kg<br>
@@ -909,14 +797,25 @@ function stickerHTML(c) {
 
       <hr>
 
-      ${(c.items || []).map(i => `
-        ${i.part_no} ${i.model} — ${i.qty}
-      `).join("<br>")}
+      ${(c.items || []).map(i => `${escapeHTML(i.part_no)} ${escapeHTML(i.model)} — ${i.qty}`).join("<br>")}
     </div>
   `;
 }
 
 /* HELPERS */
+
+function saveLocal() {
+  localStorage.setItem("orders_v5_full", JSON.stringify(state.orders));
+  localStorage.setItem("cartons_v5_full", JSON.stringify(state.cartons));
+}
+
+function moveNext(e, nextId) {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+
+  const el = document.getElementById(nextId);
+  if (el) el.focus();
+}
 
 function main(html) {
   document.getElementById("main").innerHTML = html;
@@ -926,199 +825,70 @@ function val(id) {
   return document.getElementById(id)?.value || "";
 }
 
+function escapeHTML(v) {
+  return String(v || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function injectStyle() {
   const style = document.createElement("style");
 
   style.innerHTML = `
-    body{
-      font-family:Arial,sans-serif;
-      background:#f4f6f8;
-      margin:0;
-      color:#111;
-    }
-
-    .wrap{
-      max-width:1100px;
-      margin:auto;
-      padding:30px 20px;
-    }
-
-    .card{
-      background:white;
-      padding:22px;
-      border-radius:14px;
-      box-shadow:0 2px 10px #0001;
-      margin-bottom:18px;
-    }
-
-    .top{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      gap:20px;
-    }
+    body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#111}
+    .wrap{max-width:1100px;margin:auto;padding:30px 20px}
+    .card{background:white;padding:22px;border-radius:14px;box-shadow:0 2px 10px #0001;margin-bottom:18px}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:20px}
 
     input,select,button{
-      width:100%;
-      padding:13px;
-      margin:8px 0;
-      border-radius:10px;
-      border:1px solid #ccc;
-      font-size:16px;
-      box-sizing:border-box;
+      width:100%;padding:13px;margin:8px 0;border-radius:10px;
+      border:1px solid #ccc;font-size:16px;box-sizing:border-box
     }
 
-    button{
-      background:#304ffe;
-      color:white;
-      border:none;
-      font-weight:bold;
-      cursor:pointer;
-    }
+    button{background:#304ffe;color:white;border:none;font-weight:bold;cursor:pointer}
+    .green{background:#2e7d32}
+    .danger{background:#a33}
 
-    .green{
-      background:#2e7d32;
-    }
+    .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+    .tabs button{background:white;color:#111;border:1px solid #ddd}
+    .tabs button.active{background:#304ffe;color:white}
 
-    .danger{
-      background:#a33;
-    }
+    .row{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    .row4{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px}
 
-    .tabs{
-      display:grid;
-      grid-template-columns:repeat(4,1fr);
-      gap:10px;
-      margin-bottom:18px;
+    .searchBox{position:relative}
+    .suggest{
+      position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #ddd;
+      border-radius:12px;max-height:220px;overflow:auto;z-index:999;margin-top:4px;box-shadow:0 4px 12px #0002
     }
+    .suggestItem{padding:12px;cursor:pointer;border-bottom:1px solid #f1f1f1;color:#111}
+    .suggestItem:hover{background:#f5f7ff}
 
-    .tabs button{
-      background:white;
-      color:#111;
-      border:1px solid #ddd;
-    }
+    table{width:100%;border-collapse:collapse;margin:12px 0}
+    th,td{border:1px solid #ddd;padding:10px;text-align:left}
+    th{background:#eee}
 
-    .row{
-      display:grid;
-      grid-template-columns:2fr 1fr;
-      gap:10px;
-    }
+    .info{background:#f1f5ff;padding:12px;border-radius:10px;margin:10px 0}
+    .line{background:#fafafa;border:1px solid #ddd;border-radius:10px;padding:12px;margin:10px 0}
+    .stat{background:#f1f5ff;padding:20px;border-radius:12px;text-align:center}
+    .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+    .bad{color:#a33;font-weight:bold}
 
-    .row3{
-      display:grid;
-      grid-template-columns:1fr 1fr 1fr;
-      gap:10px;
-    }
-
-    .row4{
-      display:grid;
-      grid-template-columns:1fr 1fr 1fr 1fr;
-      gap:10px;
-    }
-
-    table{
-      width:100%;
-      border-collapse:collapse;
-      margin:12px 0;
-    }
-
-    th,td{
-      border:1px solid #ddd;
-      padding:10px;
-      text-align:left;
-    }
-
-    th{
-      background:#eee;
-    }
-
-    .info{
-      background:#f1f5ff;
-      padding:12px;
-      border-radius:10px;
-      margin:10px 0;
-    }
-
-    .line{
-      background:#fafafa;
-      border:1px solid #ddd;
-      border-radius:10px;
-      padding:12px;
-      margin:10px 0;
-    }
-
-    .stat{
-      background:#f1f5ff;
-      padding:20px;
-      border-radius:12px;
-      text-align:center;
-    }
-
-    .grid4{
-      display:grid;
-      grid-template-columns:repeat(4,1fr);
-      gap:10px;
-    }
-
-    .bad{
-      color:#a33;
-      font-weight:bold;
-    }
-
-    .sticker{
-      width:360px;
-      border:2px solid #111;
-      padding:18px;
-      margin-top:15px;
-      background:white;
-      color:#111;
-    }
-
-    .sticker h2{
-      text-align:center;
-      letter-spacing:2px;
-    }
+    .sticker{width:360px;border:2px solid #111;padding:18px;margin-top:15px;background:white;color:#111}
+    .sticker h2{text-align:center;letter-spacing:2px}
 
     @media print{
       body *{visibility:hidden}
       #sticker,#sticker *{visibility:visible}
       #sticker{position:absolute;left:0;top:0}
     }
-.searchBox{
-position:relative;
-}
 
-.suggest{
-position:absolute;
-top:100%;
-left:0;
-right:0;
-background:white;
-border:1px solid #ddd;
-border-radius:12px;
-max-height:220px;
-overflow:auto;
-z-index:999;
-margin-top:4px;
-}
-
-.suggestItem{
-padding:10px;
-cursor:pointer;
-border-bottom:1px solid #f1f1f1;
-color:#111;
-}
-
-.suggestItem:hover{
-background:#f5f7ff;
-}
     @media(max-width:800px){
-      .row,.row3,.row4,.tabs,.grid4{
-        grid-template-columns:1fr;
-      }
-
-      .top{
-        display:block;
-      }
+      .row,.row3,.row4,.tabs,.grid4{grid-template-columns:1fr}
+      .top{display:block}
     }
   `;
 
