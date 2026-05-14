@@ -549,7 +549,13 @@ function packingFormHTML() {
     ${balanceTable(order)}
 
     <div class="row3">
-      <input id="cartonNo" placeholder="Carton No" value="${state.packingCartonNo}" oninput="state.packingCartonNo=this.value; updateExpectedBox()" onkeydown="moveNext(event,'outerWeight')">
+      <input
+  id="cartonNo"
+  placeholder="Carton No"
+  value="${state.packingCartonNo}"
+  oninput="state.packingCartonNo=this.value; updateExpectedBox()"
+  onkeydown="if(event.key==='Enter'){event.preventDefault(); document.getElementById('packItem')?.focus();}"
+>
       <input id="outerWeight" placeholder="Outer Weight" value="${state.packingOuterWeight}" oninput="state.packingOuterWeight=this.value; updateExpectedBox()" onkeydown="moveNext(event,'packItem')">
       <input readonly placeholder="Total Cartons" value="${getCurrentTotalCartons()}">
     </div>
@@ -652,7 +658,22 @@ function addCartonItem() {
   });
 
   renderPacking();
-  setTimeout(() => document.getElementById("cartonNo")?.focus(), 50);
+  setTimeout(() => {
+
+  const c =
+    document.getElementById(
+      "cartonNo"
+    );
+
+  if (c) {
+
+    c.focus();
+
+    c.select();
+
+  }
+
+}, 50);
 }
 
 function getCurrentTotalCartons() {
