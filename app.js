@@ -206,36 +206,86 @@ function renderDashboard() {
 /* ORDERS */
 
 function renderOrders() {
+
+  const savedParty =
+    window.currentParty || "";
+
   main(`
     <div class="card">
+
       <h2>Orders</h2>
 
-      <input id="party" placeholder="Party Name" onkeydown="moveNext(event,'part')">
+      <input
+        id="party"
+        placeholder="Party Name"
+        value="${savedParty}"
+      >
 
-      <div class="row4">
+      <div class="row3">
+
         <div class="searchBox">
-          <input id="part" placeholder="Search Part / Model" autocomplete="off"
-            oninput="showSkuSuggest()" onkeydown="orderSearchEnter(event)">
-          <div id="skuSuggest" class="suggest"></div>
+
+          <input
+            id="part"
+            placeholder="Search Part No / Vehicle"
+            autocomplete="off"
+            oninput="showSkuSuggest()"
+            onkeydown="orderSearchEnter(event)"
+          >
+
+          <div
+            id="skuSuggest"
+            class="suggest"
+          ></div>
+
         </div>
 
-        <input id="item" placeholder="Vehicle / Item" onkeydown="moveNext(event,'qty')">
-        <input id="qty" type="number" placeholder="Qty" onkeydown="moveNext(event,'weight')">
-        <input id="weight" type="number" step="0.01" placeholder="Weight / Set kg" onkeydown="if(event.key==='Enter') addOrderItem()">
+        <input
+          id="qty"
+          type="number"
+          placeholder="Qty"
+          onkeydown="
+            if(event.key==='Enter'){
+              addOrderItem()
+            }
+          "
+        >
+
+        <input
+          id="weight"
+          placeholder="Weight"
+          readonly
+        >
+
       </div>
 
-      <button onclick="addOrderItem()">Add Item</button>
+      <button onclick="addOrderItem()">
+        Add Item
+      </button>
 
       ${orderDraftTable()}
 
-      <button class="green" onclick="saveOrder()">Save Order</button>
+      <button
+        class="green"
+        onclick="saveOrder()"
+      >
+        Save Order
+      </button>
 
       <h3>Saved Orders</h3>
+
       ${savedOrdersHTML()}
+
     </div>
   `);
 
-  setTimeout(() => document.getElementById("party")?.focus(), 50);
+  setTimeout(() => {
+
+    document
+      .getElementById("part")
+      ?.focus();
+
+  }, 100);
 }
 
 function showSkuSuggest() {
@@ -279,34 +329,91 @@ function orderSearchEnter(e) {
 }
 
 function selectSku(i) {
-  const s = skuSuggestionList[i];
+
+  const s =
+    skuSuggestionList[i];
+
   if (!s) return;
 
-  document.getElementById("part").value = s.part_no || s.part || "";
-  document.getElementById("item").value = s.model || s.model_name || s.item || "";
-  document.getElementById("weight").value = s.weight_per_set || s.weight || "";
+  document.getElementById(
+    "part"
+  ).value =
+    (s.part_no || s.part || "")
+    + " — " +
+    (s.model || s.item || "");
 
-  document.getElementById("skuSuggest").innerHTML = "";
-  document.getElementById("qty").focus();
+  document.getElementById(
+    "weight"
+  ).value =
+    s.weight_per_set ||
+    s.weight ||
+    "";
+
+  document.getElementById(
+    "skuSuggest"
+  ).innerHTML = "";
+
+  window.selectedSku = s;
+
+  document.getElementById(
+    "qty"
+  ).focus();
 }
 
 function addOrderItem() {
-  const item = {
-    part_no: val("part"),
-    model: val("item"),
-    qty: Number(val("qty")),
-    weight_per_set: Number(val("weight") || 0)
-  };
 
-  if (!item.part_no || !item.model || !item.qty) {
-    alert("Part, item and qty required");
+  const party =
+    val("party");
+
+  window.currentParty =
+    party;
+
+  const s =
+    window.selectedSku;
+
+  if (!s) {
+    alert("Select SKU");
     return;
   }
 
-  state.orderDraftItems.push(item);
+  const qty =
+    Number(val("qty"));
+
+  if (!qty) {
+    alert("Enter Qty");
+    return;
+  }
+
+  state.orderDraftItems.push({
+
+    part_no:
+      s.part_no ||
+      s.part,
+
+    model:
+      s.model ||
+      s.item,
+
+    qty,
+
+    weight_per_set:
+      Number(
+        s.weight_per_set ||
+        s.weight ||
+        0
+      )
+
+  });
+
   renderOrders();
 
-  setTimeout(() => document.getElementById("part")?.focus(), 50);
+  setTimeout(() => {
+
+    document
+      .getElementById("part")
+      ?.focus();
+
+  }, 100);
 }
 
 function orderDraftTable() {
