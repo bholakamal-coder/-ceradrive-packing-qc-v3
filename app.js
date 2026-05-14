@@ -1317,113 +1317,64 @@ function stickerHTML(c) {
 }
 function renderSaved() {
 
-  const list =
-    [...state.cartons]
-    .reverse();
+  const saved = state.cartons.filter(
+    c => c.status === "PASS" || c.status === "RECHECK"
+  );
 
   main(`
-
     <div class="card">
 
-      <h2>
-        Saved Cartons
-      </h2>
+      <h2>Saved / Completed</h2>
 
-      <input
-        id="savedSearch"
-        placeholder="Search Party / Carton"
-        oninput="renderSaved()"
-      >
+      ${
+        !saved.length
+        ? `<p>No completed cartons.</p>`
+        : `
 
-      <table>
-
-        <tr>
-
-          <th>Party</th>
-
-          <th>Carton</th>
-
-          <th>Status</th>
-
-          <th>Gross</th>
-
-          <th>Action</th>
-
-        </tr>
-
-        ${list.filter(c => {
-
-          const q =
-            (
-              document.getElementById(
-                "savedSearch"
-              )?.value || ""
-            )
-            .toLowerCase();
-
-          if (!q) return true;
-
-          return (
-
-            String(c.party)
-            .toLowerCase()
-            .includes(q)
-
-            ||
-
-            String(c.carton_no)
-            .toLowerCase()
-            .includes(q)
-
-          );
-
-        }).map(c => `
-
+        <table>
           <tr>
-
-            <td>
-              ${escapeHTML(c.party)}
-            </td>
-
-            <td>
-              ${c.carton_no}/${c.total_cartons}
-            </td>
-
-            <td>
-              ${c.status}
-            </td>
-
-            <td>
-              ${Number(
-                c.actual_weight ||
-                c.expected_weight ||
-                0
-              ).toFixed(2)}
-              kg
-            </td>
-
-            <td>
-
-              <button
-                onclick="printSticker('${c.id}')"
-              >
-                Print
-              </button>
-
-            </td>
-
+            <th>Party</th>
+            <th>Carton</th>
+            <th>Status</th>
+            <th>Gross</th>
+            <th>Actual</th>
           </tr>
 
-        `).join("")}
+          ${saved.map(c => `
+            <tr>
 
-      </table>
+              <td>
+                ${escapeHTML(c.party)}
+              </td>
+
+              <td>
+                ${c.carton_no}/${c.total_cartons}
+              </td>
+
+              <td>
+                ${c.status}
+              </td>
+
+              <td>
+                ${Number(c.expected_weight || 0).toFixed(2)}
+              </td>
+
+              <td>
+                ${Number(c.actual_weight || 0).toFixed(2)}
+              </td>
+
+            </tr>
+          `).join("")}
+
+        </table>
+
+        `
+      }
 
     </div>
-
   `);
 
 }
-/* HELPERS */
 
 function saveLocal() {
   localStorage.setItem("orders_v5_full", JSON.stringify(state.orders));
