@@ -87,7 +87,7 @@ function renderLogin(){
   app.innerHTML=`
     <div class="login-card">
       <img src="assets/logo.jpeg" class="logo" onerror="this.style.display='none'">
-      <p class="muted">Packing & QC System V8.0</p>
+      <p class="muted">Packing & QC System V8.0.1</p>
 
       <input id="loginUser" placeholder="Username">
       <input id="loginPass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter') login()">
