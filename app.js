@@ -1,1521 +1,695 @@
-const API = {
-  login: "/api/login",
-  sku: "/api/sku"
-};
-
-let state = {
-  user: JSON.parse(localStorage.getItem("user") || "null"),
-  tab: "dashboard",
-  orders: JSON.parse(localStorage.getItem("orders_v5_full") || "[]"),
-  cartons: JSON.parse(localStorage.getItem("cartons_v5_full") || "[]"),
-  skus: [],
-  orderDraftItems: [],
-  cartonDraftItems: [],
-  selectedOrderId: "",
-  selectedCartonId: "",
-  packingCartonNo: "1",
-  packingOuterWeight: "0.30"
-};
-
-let skuSuggestionList = [];
-
-document.addEventListener("DOMContentLoaded", init);
-
-async function init() {
-  injectStyle();
-
-  if (!state.user) {
-    renderLogin();
-    return;
-  }
-
-  await loadSkus();
-await loadOnlineCartons();
-renderApp();
+const API={setup:"/api/setup",skus:"/api/skus",orders:"/api/orders",cartons:"/api/cartons"};
+const USERS=[{username:"admin",password:"Admin123",role:"ADMIN"},{username:"manager",password:"Manager123",role:"MANAGER"},{username:"packing",password:"Pack123",role:"PACKING"},{username:"qc",password:"Qc123",role:"QC"}];
+let state={user:null,screen:"HOME",skus:[],orders:[],cartons:[],orderDraft:[],cartonDraft:[],selectedSku:null,selectedOrderNo:"",brandOn:true};
+const QC_TOLERANCE_KG=0.30; // pass range: expected weight +/- 300 grams
+function normText(x){return String(x||"").trim().replace(/\s+/g," ")} 
+function normStatus(x){return String(x||"").trim().toUpperCase()}
+function isQCDone(c){const st=normStatus(c.status);return st==="PASS"||st==="RECHECK"||st==="QC_DONE"||(Number(c.actual_weight||0)>0 && st!=="PENDING_QC")}
+function partyKey(x){return normText(x).toLowerCase()}
+function parseMaybeDate(x){
+ const raw=String(x||"").trim();
+ if(!raw)return null;
+ const d=new Date(raw);
+ return isNaN(d.getTime())?null:d;
 }
-
-/* API */
-
-async function api(url, opts = {}) {
-  const fetchOptions = { ...opts };
-
-  if (opts.body) {
-    fetchOptions.headers = {
-      "Content-Type": "application/json",
-      ...(opts.headers || {})
-    };
-  }
-
-  const res = await fetch(url, fetchOptions);
-  const text = await res.text();
-
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-
-  if (!res.ok) {
-    console.log("API ERROR", data);
-    throw new Error(data.error || data.raw || "API Error");
-  }
-
-  return data;
+function fmtDate(x,withTime=false){
+ const d=parseMaybeDate(x);
+ if(!d)return x?String(x):"-";
+ const dd=String(d.getDate()).padStart(2,"0"),mm=String(d.getMonth()+1).padStart(2,"0"),yy=d.getFullYear();
+ const date=`${dd}/${mm}/${yy}`;
+ if(!withTime)return date;
+ let h=d.getHours(),m=String(d.getMinutes()).padStart(2,"0"),ap=h>=12?"PM":"AM";
+ h=h%12||12;
+ return `${date} ${h}:${m} ${ap}`;
 }
-
-async function loadSkus() {
-  try {
-    const res = await api(API.sku + "?q=");
-    state.skus = res.skus || res.items || [];
-    if (!state.skus.length) addDemoSkus();
-    console.log("SKUS LOADED", state.skus.length);
-  } catch (e) {
-    console.log("SKU LOAD FAILED - demo SKUs loaded", e.message);
-    addDemoSkus();
+function latestFirstValue(x){
+ const d=parseMaybeDate(x);
+ return d?d.getTime():0;
+}
+function orderByNo(no){return state.orders.find(o=>String(o.order_no)===String(no))||{}}
+const app=document.getElementById("app");init();
+async function init(){
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("/service-worker.js").catch(()=>{});
   }
-}
+  await api(API.setup).catch(()=>{});
+  await loadAll();
 
-function addDemoSkus() {
-  state.skus = [
-    { part_no: "VO101P", model: "Demo Vehicle 101", weight_per_set: 1.20 },
-    { part_no: "HP102P", model: "Demo Vehicle 102", weight_per_set: 1.35 },
-    { part_no: "HE103P", model: "Demo Vehicle 103", weight_per_set: 1.50 },
-    { part_no: "VO202C", model: "Demo Vehicle 202", weight_per_set: 1.10 },
-    { part_no: "HE303P", model: "Demo Vehicle 303", weight_per_set: 1.65 }
-  ];
-}
-
-/* LOGIN */
-
-function renderLogin() {
-  document.body.innerHTML = `
-    <div class="wrap loginWrap">
-      <div class="card loginCard">
-        <h1>Ceradrive Packing QC V5</h1>
-        <p>Order → Packing → QC → Sticker</p>
-
-        <input id="u" placeholder="Username" value="admin" onkeydown="moveNext(event,'p')">
-        <input id="p" type="password" placeholder="Password" value="Admin123" onkeydown="if(event.key==='Enter') login()">
-
-        <button onclick="login()">Login</button>
-
-        <small>admin/Admin123, packing/Pack123, qc/Qc123</small>
-      </div>
-    </div>
-  `;
-}
-
-async function login() {
-  const username = val("u");
-  const password = val("p");
-
-  try {
-    const data = await api(API.login, {
-      method: "POST",
-      body: JSON.stringify({ username, password })
-    });
-
-    state.user = data.user || { username, role: "user" };
-  } catch (e) {
-    const valid =
-      (username === "admin" && password === "Admin123") ||
-      (username === "packing" && password === "Pack123") ||
-      (username === "qc" && password === "Qc123");
-
-    if (!valid) {
-      alert("Login failed: " + e.message);
+  const remembered=localStorage.getItem("remember_user_v7_2") || localStorage.getItem("remember_user_v7");
+  if(remembered){
+    const user=USERS.find(u=>u.username===remembered);
+    if(user){
+      state.user=user;
+      state.screen="HOME";
+      renderApp();
       return;
     }
-
-    state.user = {
-      username,
-      role: username === "admin" ? "admin" : username
-    };
   }
-
-  localStorage.setItem("user", JSON.stringify(state.user));
-  await loadSkus();
-  renderApp();
-}
-
-function logout() {
-  localStorage.removeItem("user");
-  state.user = null;
   renderLogin();
 }
-
-/* APP */
-
-function renderApp() {
-  document.body.innerHTML = `
-    <div class="wrap">
-      <div class="card top">
-        <div>
-          <h2>Ceradrive Packing QC V5</h2>
-          <p>Welcome ${escapeHTML(state.user.username)} | ${escapeHTML(state.user.role || "")}</p>
-        </div>
-        <button class="danger" onclick="logout()">Logout</button>
-      </div>
-
-      <div class="tabs">
-        <button class="${state.tab === "dashboard" ? "active" : ""}" onclick="setTab('dashboard')">Dashboard</button>
-        <button class="${state.tab === "orders" ? "active" : ""}" onclick="setTab('orders')">Orders</button>
-        <button class="${state.tab === "packing" ? "active" : ""}" onclick="setTab('packing')">Packing</button>
-        <button class="${state.tab === "qc" ? "active" : ""}" onclick="setTab('qc')">QC</button>
-        <button class="${state.tab === "saved" ? "active" : ""}" onclick="setTab('saved')">Saved</button>
-      </div>
-
-      <div id="main"></div>
-    </div>
-  `;
-
-  renderTab();
+async function api(url,opts={}){const res=await fetch(url,{headers:{"Content-Type":"application/json"},...opts});const text=await res.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!res.ok||data.ok===false)throw new Error(data.error||"API error");return data}
+async function loadAll(){try{const [s,o,c]=await Promise.all([api(API.skus),api(API.orders),api(API.cartons)]);state.skus=s.skus||[];state.orders=o.orders||[];state.cartons=c.cartons||[]}catch(e){state.skus=JSON.parse(localStorage.getItem("skus_v7")||"[]");state.orders=JSON.parse(localStorage.getItem("orders_v7")||"[]");state.cartons=JSON.parse(localStorage.getItem("cartons_v7")||"[]")}if(!state.skus.length){state.skus=[{part_no:"VO101P",vehicle:"SWIFT",weight:1.20,mrp:0,dealer:0,export_price:0,active:1},{part_no:"HP202P",vehicle:"BALENO",weight:1.45,mrp:0,dealer:0,export_price:0,active:1},{part_no:"HE303P",vehicle:"CRETA",weight:1.60,mrp:0,dealer:0,export_price:0,active:1},{part_no:"VO404P",vehicle:"I20",weight:1.30,mrp:0,dealer:0,export_price:0,active:1}]}}
+function toast(msg){let t=document.getElementById("toast");if(!t){t=document.createElement("div");t.id="toast";t.className="toast";document.body.appendChild(t)}t.textContent=msg;clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>t.remove(),1800)}
+async function saveSkus(){toast("Saving SKU...");localStorage.setItem("skus_v7",JSON.stringify(state.skus));await api(API.skus,{method:"POST",body:JSON.stringify({skus:state.skus})});toast("Saved successfully")}
+async function saveOrders(){toast("Saving order...");localStorage.setItem("orders_v7",JSON.stringify(state.orders));await api(API.orders,{method:"POST",body:JSON.stringify({orders:state.orders})});toast("Saved successfully")}
+async function saveCartons(){toast("Saving cartons...");localStorage.setItem("cartons_v7",JSON.stringify(state.cartons));await api(API.cartons,{method:"POST",body:JSON.stringify({cartons:state.cartons})});toast("Saved successfully")}
+async function saveOrdersSafe(){
+ toast("Saving orders safely...");
+ localStorage.setItem("orders_v7",JSON.stringify(state.orders));
+ let merged=state.orders;
+ try{
+  const remote=await api(API.orders);
+  const map=new Map((remote.orders||[]).map(o=>[String(o.order_no),o]));
+  state.orders.forEach(o=>map.set(String(o.order_no),o));
+  merged=[...map.values()];
+  state.orders=merged;
+  localStorage.setItem("orders_v7",JSON.stringify(state.orders));
+ }catch(e){}
+ await api(API.orders,{method:"POST",body:JSON.stringify({orders:merged})});
+ toast("Orders saved");
 }
-
-function setTab(tab) {
-  state.tab = tab;
-  renderApp();
+async function saveCartonsSafe(){
+ toast("Saving QC safely...");
+ localStorage.setItem("cartons_v7",JSON.stringify(state.cartons));
+ let merged=state.cartons;
+ try{
+  const remote=await api(API.cartons);
+  const map=new Map((remote.cartons||[]).map(c=>[String(c.id),c]));
+  state.cartons.forEach(c=>map.set(String(c.id),c));
+  merged=[...map.values()];
+  state.cartons=merged;
+  localStorage.setItem("cartons_v7",JSON.stringify(state.cartons));
+ }catch(e){}
+ await api(API.cartons,{method:"POST",body:JSON.stringify({cartons:merged})});
+ toast("QC saved");
 }
-
-function renderTab() {
-  if (state.tab === "orders") return renderOrders();
-  if (state.tab === "packing") return renderPacking();
-  if (state.tab === "qc") return renderQC();
-  if (state.tab === "saved") return renderSaved();
-  renderDashboard();
-}
-
-/* DASHBOARD */
-
-function renderDashboard() {
-  const pending = state.cartons.filter(c => c.status === "PENDING_QC").length;
-  const pass = state.cartons.filter(c => c.status === "PASS").length;
-  const recheck = state.cartons.filter(c => c.status === "RECHECK").length;
-
-  main(`
-    <div class="card">
-      <h2>Dashboard</h2>
-      <div class="grid4">
-        <div class="stat">Orders<br><b>${state.orders.length}</b></div>
-        <div class="stat">Pending QC<br><b>${pending}</b></div>
-        <div class="stat">PASS<br><b>${pass}</b></div>
-        <div class="stat">RECHECK<br><b>${recheck}</b></div>
-      </div>
-    </div>
-  `);
-}
-
-/* ORDERS */
-
-function renderOrders() {
-
-  const savedParty =
-    window.currentParty || "";
-
-  main(`
-    <div class="card">
-
-      <h2>Orders</h2>
-
-      <input
-        id="party"
-        placeholder="Party Name"
-        value="${savedParty}"
-        onkeydown="moveNext(event,'part')"
-      >
-
-      <div class="row3">
-
-        <div class="searchBox">
-
-          <input
-            id="part"
-            placeholder="Search Part No / Vehicle"
-            autocomplete="off"
-            oninput="showSkuSuggest()"
-            onkeydown="orderSearchEnter(event)"
-          >
-
-          <div
-            id="skuSuggest"
-            class="suggest"
-          ></div>
-
-        </div>
-
-        <input
-          id="qty"
-          type="number"
-          placeholder="Qty"
-          onkeydown="
-            if(event.key==='Enter'){
-              addOrderItem()
-            }
-          "
-        >
-
-        <input
-          id="weight"
-          placeholder="Weight"
-          readonly
-        >
-
-      </div>
-
-      <button onclick="addOrderItem()">
-        Add Item
-      </button>
-
-      ${orderDraftTable()}
-
-      <button
-        class="green"
-        onclick="saveOrder()"
-      >
-        Save Order
-      </button>
-
-      <h3>Saved Orders</h3>
-
-      ${savedOrdersHTML()}
-
-    </div>
-  `);
-
-  setTimeout(() => {
-
-    document
-      .getElementById("part")
-      ?.focus();
-
-  }, 100);
-}
-
-function showSkuSuggest() {
-  const q = val("part").toLowerCase().trim();
-  const box = document.getElementById("skuSuggest");
-
-  if (!box) return;
-
-  if (!q) {
-    box.innerHTML = "";
-    skuSuggestionList = [];
-    return;
-  }
-
-  skuSuggestionList = state.skus.filter(s =>
-    String(s.part_no || s.part || "").toLowerCase().includes(q) ||
-    String(s.model || s.model_name || s.item || "").toLowerCase().includes(q) ||
-    String(s.make_name || "").toLowerCase().includes(q)
-  ).slice(0, 10);
-
-  box.innerHTML = skuSuggestionList.map((s, i) => `
-    <div class="suggestItem" onclick="selectSku(${i})">
-      <b>${escapeHTML(s.part_no || s.part || "")}</b> — ${escapeHTML(s.model || s.model_name || s.item || "")}
-    </div>
-  `).join("");
-}
-
-function orderSearchEnter(e) {
-  if (e.key !== "Enter") return;
-
-  e.preventDefault();
-
-  if (!skuSuggestionList.length) showSkuSuggest();
-
-  if (skuSuggestionList.length) {
-    selectSku(0);
-    return;
-  }
-
-  document.getElementById("qty")?.focus();
-}
-
-function selectSku(i) {
-
-  const s =
-    skuSuggestionList[i];
-
-  if (!s) return;
-
-  document.getElementById(
-    "part"
-  ).value =
-    (s.part_no || s.part || "")
-    + " — " +
-    (s.model || s.item || "");
-
-  document.getElementById(
-    "weight"
-  ).value =
-    s.weight_per_set ||
-    s.weight ||
-    "";
-
-  document.getElementById(
-    "skuSuggest"
-  ).innerHTML = "";
-
-  window.selectedSku = s;
-
-  document.getElementById(
-    "qty"
-  ).focus();
-}
-
-function addOrderItem() {
-
-  const party =
-    val("party");
-
-  window.currentParty =
-    party;
-
-  const s =
-    window.selectedSku;
-
-  if (!s) {
-    alert("Select SKU");
-    return;
-  }
-
-  const qty =
-    Number(val("qty"));
-
-  if (!qty) {
-    alert("Enter Qty");
-    return;
-  }
-
-  state.orderDraftItems.push({
-
-    part_no:
-      s.part_no ||
-      s.part,
-
-    model:
-      s.model ||
-      s.item,
-
-    qty,
-
-    weight_per_set:
-      Number(
-        s.weight_per_set ||
-        s.weight ||
-        0
-      )
-
-  });
-
-  renderOrders();
-
-  setTimeout(() => {
-
-    document
-      .getElementById("part")
-      ?.focus();
-
-  }, 100);
-}
-
-function orderDraftTable() {
-  if (!state.orderDraftItems.length) return `<p>No items added.</p>`;
-
-  return `
-    <table>
-      <tr>
-        <th>Part</th><th>Item</th><th>Qty</th><th>Weight / Set</th><th>Delete</th>
-      </tr>
-      ${state.orderDraftItems.map((it, i) => `
-        <tr>
-          <td>${escapeHTML(it.part_no)}</td>
-          <td>${escapeHTML(it.model)}</td>
-          <td>${it.qty}</td>
-          <td>${it.weight_per_set}</td>
-          <td><button class="danger" onclick="deleteOrderDraftItem(${i})">Delete</button></td>
-        </tr>
-      `).join("")}
-    </table>
-  `;
-}
-
-function deleteOrderDraftItem(i) {
-  state.orderDraftItems.splice(i, 1);
-  renderOrders();
-}
-
-function getNextOrderNo() {
-  const next = state.orders.length + 1;
-  return String(next).padStart(2, "0");
-}
-
-function saveOrder() {
-  const party = val("party");
-
-  if (!party) return alert("Party required");
-  if (!state.orderDraftItems.length) return alert("Add at least one item");
-
-  state.orders.push({
-    id: getNextOrderNo(),
-    party,
-    items: state.orderDraftItems,
-    created_at: new Date().toLocaleString()
-  });
-
-  state.orderDraftItems = [];
-  window.currentParty = "";
-  window.selectedSku = null;
-
-  saveLocal();
-
-  alert("Order saved");
-  renderOrders();
-}
-
-function savedOrdersHTML() {
-  if (!state.orders.length) return `<p>No saved orders.</p>`;
-
-  return state.orders.map(o => `
-    <div class="line">
-      <b>${escapeHTML(o.party)}</b><br>
-      Order No: ${o.id}<br>
-      Items: ${o.items.length}<br>
-      Date: ${o.created_at}<br><br>
-      <button class="danger" onclick="deleteOrder(${o.id})">Delete Order</button>
-    </div>
-  `).join("");
-}
-
-function deleteOrder(id) {
-  if (!confirm("Delete this order?")) return;
-
-  state.orders = state.orders.filter(o => o.id !== id);
-  state.cartons = state.cartons.filter(c => c.order_id !== id);
-  saveLocal();
-  renderOrders();
-}
-
-/* PACKING */
-
-function renderPacking() {
-  main(`
-    <div class="card">
-      <h2>Packing</h2>
-      ${packingOrderSelect()}
-      ${state.selectedOrderId ? packingFormHTML() : ""}
-    </div>
-  `);
-}
-
-function packingOrderSelect() {
-  if (!state.orders.length) return `<p>No orders available.</p>`;
-
-  return `
-    <select onchange="selectPackingOrder(this.value)">
-      <option value="">Select Order</option>
-      ${state.orders.map(o => `
-        <option value="${o.id}" ${String(state.selectedOrderId) === String(o.id) ? "selected" : ""}>
-          ${escapeHTML(o.party)} — ${o.id}
-        </option>
-      `).join("")}
-    </select>
-  `;
-}
-
-function selectPackingOrder(id) {
-  state.selectedOrderId = id;
-  state.cartonDraftItems = [];
-
-  const existing = state.cartons.filter(c => String(c.order_id) === String(id));
-  state.packingCartonNo = String(existing.length + 1);
-  state.packingOuterWeight = "0.30";
-
-  renderPacking();
-}
-
-function getSelectedOrder() {
-  return state.orders.find(o => String(o.id) === String(state.selectedOrderId));
-}
-
-function packingFormHTML() {
-  const order = getSelectedOrder();
-  if (!order) return "";
-
-  return `
-    <div class="info">
-      <b>Party:</b> ${escapeHTML(order.party)}<br>
-      <b>Order No:</b> ${order.id}
-    </div>
-
-    ${balanceTable(order)}
-
-    <div class="row3">
-      <input
-  id="cartonNo"
-  placeholder="Carton No"
-  value="${state.packingCartonNo}"
-  oninput="state.packingCartonNo=this.value; updateExpectedBox()"
-  onkeydown="if(event.key==='Enter'){event.preventDefault(); document.getElementById('packItem')?.focus();}"
->
-      <input id="outerWeight" placeholder="Outer Weight" value="${state.packingOuterWeight}" oninput="state.packingOuterWeight=this.value; updateExpectedBox()" onkeydown="moveNext(event,'packItem')">
-      <input readonly placeholder="Total Cartons" value="${getCurrentTotalCartons()}">
-    </div>
-
-    <div class="row">
-      <select id="packItem" onkeydown="moveNext(event,'packQty')">
-        <option value="">Select Order Item</option>
-        ${order.items.map((it, i) => `
-          <option value="${i}">
-            ${escapeHTML(it.part_no)} — ${escapeHTML(it.model)} — Balance ${getBalance(order.id, i)}
-          </option>
-        `).join("")}
-      </select>
-
-      <input id="packQty" type="number" placeholder="Qty then Enter" onkeydown="if(event.key==='Enter') addCartonItem()">
-    </div>
-
-    <button onclick="addCartonItem()">Add to Carton</button>
-
-    ${cartonDraftTable()}
-
-    <div class="info" id="expectedBox">
-      ${expectedBoxHTML()}
-    </div>
-
-    <button class="green" onclick="saveCartons()">Save Cartons / Send to QC</button>
-
-    ${packedCartonsHTML(order.id)}
-  `;
-}
-
-function balanceTable(order) {
-  return `
-    <h3>Order Items / Balance</h3>
-    <table>
-      <tr>
-        <th>Part</th><th>Item</th><th>Order Qty</th><th>Packed</th><th>This Entry</th><th>Balance</th>
-      </tr>
-      ${order.items.map((it, i) => `
-        <tr>
-          <td>${escapeHTML(it.part_no)}</td>
-          <td>${escapeHTML(it.model)}</td>
-          <td>${it.qty}</td>
-          <td>${getPackedQty(order.id, i)}</td>
-          <td>${getDraftQty(i)}</td>
-          <td><b>${getBalance(order.id, i)}</b></td>
-        </tr>
-      `).join("")}
-    </table>
-  `;
-}
-
-function getPackedQty(orderId, itemIndex) {
-  return state.cartons
-    .filter(c => String(c.order_id) === String(orderId))
-    .flatMap(c => c.items || [])
-    .filter(it => Number(it.order_item_index) === Number(itemIndex))
-    .reduce((sum, it) => sum + Number(it.qty || 0), 0);
-}
-
-function getDraftQty(itemIndex) {
-  return state.cartonDraftItems
-    .filter(it => Number(it.order_item_index) === Number(itemIndex))
-    .reduce((sum, it) => sum + Number(it.qty || 0), 0);
-}
-
-function getBalance(orderId, itemIndex) {
-  const order = state.orders.find(o => String(o.id) === String(orderId));
-  if (!order) return 0;
-
-  const item = order.items[itemIndex];
-  return Number(item.qty || 0) - getPackedQty(orderId, itemIndex) - getDraftQty(itemIndex);
-}
-
-function addCartonItem() {
-  const order = getSelectedOrder();
-  const itemIndex = Number(val("packItem"));
-  const qty = Number(val("packQty"));
-
-  if (!order || val("packItem") === "" || !qty) {
-    alert("Select item and qty");
-    return;
-  }
-
-  const balance = getBalance(order.id, itemIndex);
-  if (qty > balance) {
-    alert("Qty exceeds balance. Balance: " + balance);
-    return;
-  }
-
-  const item = order.items[itemIndex];
-
-  state.cartonDraftItems.push({
-    carton_no: state.packingCartonNo,
-    order_item_index: itemIndex,
-    part_no: item.part_no,
-    model: item.model,
-    qty,
-    weight_per_set: Number(item.weight_per_set || 0)
-  });
-
-  renderPacking();
-  setTimeout(() => {
-
-  const c =
-    document.getElementById(
-      "cartonNo"
-    );
-
-  if (c) {
-
-    c.focus();
-
-    c.select();
-
-  }
-
-}, 50);
-}
-
-function getCurrentTotalCartons() {
-  const nums = state.cartonDraftItems
-    .map(it => Number(it.carton_no || 0))
-    .filter(n => n > 0);
-
-  if (!nums.length) return "";
-  return Math.max(...nums);
-}
-
-function cartonDraftTable() {
-  if (!state.cartonDraftItems.length) return `<p>No carton items added.</p>`;
-
-  return `
-    <table>
-      <tr>
-        <th>Carton</th><th>Total</th><th>Part</th><th>Item</th><th>Qty</th><th>Delete</th>
-      </tr>
-      ${state.cartonDraftItems.map((it, i) => `
-        <tr>
-          <td>${it.carton_no}</td>
-          <td>${getCurrentTotalCartons()}</td>
-          <td>${escapeHTML(it.part_no)}</td>
-          <td>${escapeHTML(it.model)}</td>
-          <td>${it.qty}</td>
-          <td><button class="danger" onclick="deleteCartonDraftItem(${i})">Delete</button></td>
-        </tr>
-      `).join("")}
-    </table>
-  `;
-}
-
-function deleteCartonDraftItem(i) {
-  state.cartonDraftItems.splice(i, 1);
-  renderPacking();
-}
-
-function expectedBoxHTML() {
-  const map = {};
-
-  state.cartonDraftItems.forEach(it => {
-    const no = String(it.carton_no);
-    if (!map[no]) map[no] = { qty: 0, itemWeight: 0 };
-
-    map[no].qty += Number(it.qty || 0);
-    map[no].itemWeight += Number(it.qty || 0) * Number(it.weight_per_set || 0);
-  });
-
-  const cartons = Object.keys(map);
-  if (!cartons.length) return "No weight yet.";
-
-  const outer = Number(state.packingOuterWeight || 0);
-
-  return `
-    <h3>Carton Wise Weight</h3>
-    <table>
-      <tr>
-        <th>Carton</th><th>Total Qty</th><th>Item Weight</th><th>Outer</th><th>Gross</th>
-      </tr>
-      ${cartons.map(no => `
-        <tr>
-          <td>${no}/${getCurrentTotalCartons()}</td>
-          <td>${map[no].qty}</td>
-          <td>${map[no].itemWeight.toFixed(2)} kg</td>
-          <td>${outer.toFixed(2)} kg</td>
-          <td><b>${(map[no].itemWeight + outer).toFixed(2)} kg</b></td>
-        </tr>
-      `).join("")}
-    </table>
-  `;
-}
-
-function updateExpectedBox() {
-  const box = document.getElementById("expectedBox");
-  if (box) box.innerHTML = expectedBoxHTML();
-}
-
-function saveCartons() {
-  const order = getSelectedOrder();
-
-  if (!order) return alert("Select order");
-  if (!state.cartonDraftItems.length) return alert("Add carton items");
-
-  const cartonNos = [...new Set(state.cartonDraftItems.map(it => String(it.carton_no)))];
-  const totalCartons = String(Math.max(...cartonNos.map(n => Number(n || 0))));
-  const outer = Number(state.packingOuterWeight || 0);
-
-  cartonNos.forEach(no => {
-    const items = state.cartonDraftItems.filter(it => String(it.carton_no) === String(no));
-    const itemWeight = items.reduce((sum, it) => {
-      return sum + Number(it.qty || 0) * Number(it.weight_per_set || 0);
-    }, 0);
-
-    state.cartons.push({
-      id: Date.now() + Math.random(),
-      order_id: order.id,
-      party: order.party,
-      carton_no: no,
-      total_cartons: totalCartons,
-      outer_weight: outer,
-      expected_weight: itemWeight + outer,
-      actual_weight: 0,
-      status: "PENDING_QC",
-      items,
-      created_at: new Date().toLocaleString()
-    });
-  });
-
-  state.cartonDraftItems = [];
-  state.selectedOrderId = "";
-  state.packingCartonNo = "1";
-  state.packingOuterWeight = "0.30";
-
-  saveLocal();
-  alert("Cartons sent to QC");
-  renderPacking();
-}
-
-function packedCartonsHTML(orderId) {
-  const list = state.cartons.filter(c => String(c.order_id) === String(orderId));
-  if (!list.length) return "";
-
-  return `
-    <h3>Packed Cartons</h3>
-    <table>
-      <tr>
-        <th>Carton</th><th>Expected</th><th>Actual</th><th>Status</th>
-      </tr>
-      ${list.map(c => `
-        <tr>
-          <td>${c.carton_no}/${c.total_cartons}</td>
-          <td>${Number(c.expected_weight || 0).toFixed(2)} kg</td>
-          <td>${Number(c.actual_weight || 0).toFixed(2)} kg</td>
-          <td>${c.status}</td>
-        </tr>
-      `).join("")}
-    </table>
-  `;
-}
-
-/* QC */
-
-function renderQC() {
-  const parties = [...new Set(state.cartons.map(c => c.party).filter(Boolean))];
-
-  main(`
-    <div class="card">
-      <h2>QC / Recheck</h2>
-
-      ${!parties.length ? `<p>No cartons for QC.</p>` : `
-        <select onchange="renderQCOrderCards(this.value)">
-          <option value="">Select Party</option>
-          ${parties.map(p => `
-            <option value="${escapeHTML(p)}">
-              ${escapeHTML(p)}
-            </option>
-          `).join("")}
-        </select>
-      `}
-
-      <div id="qcCartons"></div>
-    </div>
-  `);
-}
-function renderQCOrderCards(party) {
-  const list = state.cartons.filter(c => c.party === party);
-
-  const pass = list.filter(c => c.status === "PASS").length;
-  const recheck = list.filter(c => c.status === "RECHECK").length;
-  const pending = list.filter(c => c.status === "PENDING_QC").length;
-
-  document.getElementById("qcCartons").innerHTML = `
-    <div class="info">
-      <b>Party:</b> ${escapeHTML(party)}<br>
-      <b>Total Cartons:</b> ${list.length}<br>
-      <b>Pending:</b> ${pending} |
-      <b>PASS:</b> ${pass} |
-      <b>RECHECK:</b> ${recheck}
-    </div>
-
-    ${list.map((c, index) => {
-      const sets = (c.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
-      const tare = Number(c.outer_weight || 0);
-      const gross = Number(c.expected_weight || 0);
-      const net = gross - tare;
-
-      let badgeClass = "badgePending";
-      let badgeText = "NOT WEIGHED";
-
-      if (c.status === "PASS") {
-        badgeClass = "badgePass";
-        badgeText = "PASS";
-      }
-
-      if (c.status === "RECHECK") {
-        badgeClass = "badgeRecheck";
-        badgeText = "RECHECK";
-      }
-
-      return `
-        <div class="card">
-          <div class="top">
-            <div>
-              <h2>${escapeHTML(c.party)} / ${c.carton_no}</h2>
-              <div>${sets} sets • Expected ${gross.toFixed(2)} kg</div>
-              <div>Net ${net.toFixed(2)} + Tare ${tare.toFixed(2)}</div>
-            </div>
-
-            <div>
-              <span class="${badgeClass}">
-                ${badgeText}
-              </span>
-            </div>
-          </div>
-
-          <h3>Actual Weight</h3>
-
-          <input
-            id="qc_${c.id}"
-            type="number"
-            step="0.01"
-            placeholder="kg"
-            value="${c.actual_weight || ""}"
-            onkeydown="if(event.key==='Enter'){quickQC('${c.id}', ${index})}"
-          >
-
-          <div>
-            Difference:
-            ${
-              c.actual_weight
-                ? (Number(c.actual_weight) - gross).toFixed(2)
-                : "-"
-            }
-          </div>
-        </div>
-      `;
-    }).join("")}
-
-    <div class="card">
-      <label style="display:flex;gap:10px;align-items:center;font-weight:bold;">
-        <input type="checkbox" id="brandToggle" checked style="width:auto;">
-        Ceradrive Branding
+function renderLogin(){
+  app.innerHTML=`
+    <div class="login-card">
+      <img src="assets/logo.jpeg" class="logo" onerror="this.style.display='none'">
+      <p class="muted">Packing & QC System V8.0</p>
+
+      <input id="loginUser" placeholder="Username">
+      <input id="loginPass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter') login()">
+
+      <label style="display:flex;align-items:center;gap:10px;text-align:left;margin-top:14px;font-weight:700">
+        <input id="rememberMe" type="checkbox" style="width:auto;margin:0">
+        Remember me
       </label>
 
-      <p>Godex setup: Sticker size 100 × 100 mm, scale 100%, margins none.</p>
+      <button onclick="login()">LOGIN</button>
+    </div>
+  `;
+}
+function login(){
+  const u=val("loginUser");
+  const p=val("loginPass");
+  const user=USERS.find(x=>x.username===u && x.password===p);
+  if(!user)return alert("Wrong login");
 
-      <button
-        class="green"
-        onclick="printSticker('${list[0]?.id}')"
+  state.user=user;
+
+  if(document.getElementById("rememberMe")?.checked){
+    localStorage.setItem("remember_user_v7_2",user.username);
+    localStorage.setItem("remember_user_v7",user.username);
+  }else{
+    localStorage.removeItem("remember_user_v7_2");
+    localStorage.removeItem("remember_user_v7");
+  }
+
+  state.screen="HOME";
+  renderApp();
+}
+function logout(){
+  localStorage.removeItem("remember_user_v7_2");
+  localStorage.removeItem("remember_user_v7");
+  state.user=null;
+  renderLogin();
+}
+function tabs(){
+ const r=state.user.role;
+ if(r==="ADMIN"||r==="MANAGER")return["HOME","ORDER","PACKING","QC","STICKERS","HISTORY","SKU MASTER"];
+ if(r==="PACKING")return["HOME","PACKING","HISTORY"];
+ if(r==="QC")return["HOME","QC","STICKERS","HISTORY"];
+ return["HOME"];
+}
+
+function renderApp(){const t=tabs();app.innerHTML=`<div class="top-nav no-print">${t.map(x=>`<button class="nav-btn ${state.screen===x?'active':''}" onclick="go('${x}')">${x}</button>`).join("")}<button class="nav-btn danger logout-btn" onclick="logout()">LOGOUT</button></div><div id="screenArea"></div>`;renderScreen()}
+function go(s){state.screen=s;renderApp()}
+function renderScreen(){if(state.screen==="HOME")return renderHome();if(state.screen==="ORDER")return renderOrder();if(state.screen==="PACKING")return renderPacking();if(state.screen==="QC")return renderQC();if(state.screen==="SKU MASTER")return renderSkuMaster();if(state.screen==="STICKERS")return renderStickers();if(state.screen==="HISTORY")return renderHistory()}
+function updateOrderCompletion(orderNo,silent=false){const o=state.orders.find(x=>x.order_no===orderNo);if(!o)return;const orderCartons=state.cartons.filter(c=>c.order_no===orderNo);const allPacked=o.items.every((it,i)=>packedQty(orderNo,i)>=Number(it.qty));const allQC=orderCartons.length>0&&orderCartons.every(c=>c.status==="PASS"||c.status==="RECHECK");if(allPacked&&allQC&&o.status!=="COMPLETE"){o.status="COMPLETE";if(!silent)alert("Order Complete: "+o.order_no)}else if(allPacked&&o.status!=="COMPLETE"){o.status="PACKED"}}
+function renderHome(){const p=state.orders.filter(o=>o.status==="DRAFT").length,q=state.cartons.filter(c=>c.status==="PENDING_QC").length,pa=state.cartons.filter(c=>c.status==="PASS").length,re=state.cartons.filter(c=>c.status==="RECHECK").length;screen().innerHTML=`<div class="card"><img src="assets/logo.jpeg" class="logo" onerror="this.style.display='none'"><p class="muted">${state.user.role} PANEL</p><div class="grid"><div class="stats">Orders<br><b>${state.orders.length}</b></div><div class="stats">Pending Packing<br><b>${p}</b></div><div class="stats">Pending QC<br><b>${q}</b></div><div class="stats">PASS / RECHECK<br><b>${pa}/${re}</b></div></div></div><div class="menu-grid">${tabs().filter(t=>t!=="HOME").map(t=>`<button class="menu-btn" onclick="go('${t}')"><span>${t}</span><span class="arrow">›</span></button>`).join("")}</div>`}
+function renderOrder(){
+ screen().innerHTML=`<div class="card"><h1>Order System</h1><p class="muted">Party → SKU → Enter → Qty → Enter → Repeat</p><input id="party" placeholder="Party Name" value="${esc(window.currentParty||"")}" onkeydown="if(event.key==='Enter') focusId('skuSearch')"><input id="skuSearch" placeholder="Search SKU / Vehicle" autocomplete="off" oninput="showSkuResults()" onkeydown="skuEnter(event)"><div id="skuResults"></div><input id="qty" type="number" placeholder="Qty" onkeydown="if(event.key==='Enter') addOrderItem()"><div id="selectedSku"></div><button onclick="addOrderItem()">ADD ITEM</button><hr><h3>Order Excel Import</h3><p class="hint">Columns: Party Name | Part No | Qty</p><input type="file" accept=".xlsx,.xls,.csv" onchange="importOrdersExcel(event)"></div><div id="orderDraftBox"></div><div class="card"><button class="green" onclick="saveOrder()">SAVE ORDER</button></div><div class="card"><h2>Saved Orders</h2>${ordersListHTML()}</div>`;
+ renderOrderDraft();
+ setTimeout(()=>focusId(window.currentParty?"skuSearch":"party"),50);
+}
+
+function showSkuResults(){const q=val("skuSearch").toLowerCase().trim(),box=document.getElementById("skuResults");state.selectedSku=null;if(!q){box.innerHTML="";document.getElementById("selectedSku").innerHTML="";return}const list=state.skus.filter(s=>Number(s.active??1)!==0&&(String(s.part_no).toLowerCase().includes(q)||String(s.vehicle||"").toLowerCase().includes(q))).slice(0,10);box.innerHTML=list.map(s=>`<div class="result-item" onclick="selectSku('${attr(s.part_no)}')"><span><b>${esc(s.part_no)}</b> — ${esc(s.vehicle||"")}</span><span>${Number(s.weight||0).toFixed(2)} kg</span></div>`).join("")}
+function skuEnter(e){if(e.key!=="Enter")return;e.preventDefault();const q=val("skuSearch").toLowerCase().trim();const m=state.skus.find(s=>Number(s.active??1)!==0&&(String(s.part_no).toLowerCase().includes(q)||String(s.vehicle||"").toLowerCase().includes(q)));if(!m)return alert("SKU Not Found");selectSku(m.part_no)}
+function selectSku(partNo){const s=state.skus.find(x=>String(x.part_no)===String(partNo));if(!s)return;state.selectedSku=s;document.getElementById("skuSearch").value=`${s.part_no} — ${s.vehicle||""}`;document.getElementById("skuResults").innerHTML="";document.getElementById("selectedSku").innerHTML=`<div class="info-box"><b>${esc(s.part_no)}</b> — ${esc(s.vehicle||"")}<br>Weight: ${Number(s.weight||0).toFixed(2)} kg</div>`;focusId("qty")}
+function addOrderItem(){
+ const party=val("party").trim();window.currentParty=party;
+ if(!party)return alert("Party Name required");
+ if(!state.selectedSku)return alert("Select SKU");
+ const qty=Number(val("qty"));if(!qty)return alert("Enter Qty");
+ addDraftItem(state.selectedSku,qty);
+ state.selectedSku=null;
+ document.getElementById("skuSearch").value="";
+ document.getElementById("qty").value="";
+ document.getElementById("selectedSku").innerHTML="";
+ renderOrderDraft();focusId("skuSearch");
+}
+function addDraftItem(s,qty){
+ const existing=state.orderDraft.find(i=>String(i.part_no).toLowerCase()===String(s.part_no).toLowerCase());
+ if(existing)existing.qty+=qty;
+ else state.orderDraft.push({part_no:s.part_no,vehicle:s.vehicle||"",qty,weight:Number(s.weight||0)});
+}
+async function importOrdersExcel(e){
+ const file=e.target.files[0];if(!file)return;
+ toast("Importing orders...");
+ const data=await file.arrayBuffer();const wb=XLSX.read(data);const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+ let party="";const missing=[];state.orderDraft=[];
+ rows.forEach((r,i)=>{const p=String(r["Party Name"]||r["Party"]||r["party"]||"").trim();const part=String(r["Part No"]||r["part_no"]||r["SKU"]||"").trim();const qty=Number(r["Qty"]||r["qty"]||0);if(p)party=p;if(!part||!qty)return;const sku=state.skus.find(s=>String(s.part_no).toLowerCase()===part.toLowerCase());if(!sku)missing.push(`Row ${i+2}: ${part}`);else addDraftItem(sku,qty);});
+ if(party){document.getElementById("party").value=party;window.currentParty=party;}
+ renderOrderDraft();
+ if(missing.length)alert("SKU not found:\n"+missing.join("\n"));
+ toast("Import complete");
+}
+
+function renderOrderDraft(){const box=document.getElementById("orderDraftBox");if(!box)return;let tq=0,tw=0;box.innerHTML=`<div class="card"><h2>Current Order</h2>${!state.orderDraft.length?`<p>No items added.</p>`:state.orderDraft.map((it,i)=>{tq+=Number(it.qty);tw+=Number(it.qty)*Number(it.weight);return`<div class="line order-draft-line"><div><b>${esc(it.part_no)}</b><br>${esc(it.vehicle)}</div><div class="order-qty-box"><label>Qty</label><input class="inline-qty-input" type="number" min="1" step="1" inputmode="numeric" value="${Number(it.qty)||0}" onchange="updateDraftQty(${i},this.value)" oninput="updateDraftQtySilent(${i},this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"><div class="muted">Wt: ${(Number(it.qty)*Number(it.weight)).toFixed(2)} kg</div></div><button class="danger small" onclick="deleteDraftItem(${i})">Delete</button></div>`}).join("")}<hr><h3>Total Qty: ${tq}</h3><h3>Expected Weight: ${tw.toFixed(2)} kg</h3></div>`}
+function updateDraftQtySilent(i,v){const qty=Number(v);if(!state.orderDraft[i]||!qty||qty<1)return;state.orderDraft[i].qty=qty}
+function updateDraftQty(i,v){const qty=Number(v);if(!state.orderDraft[i])return;if(!qty||qty<1){alert("Enter valid Qty");renderOrderDraft();return}state.orderDraft[i].qty=qty;renderOrderDraft()}
+function deleteDraftItem(i){state.orderDraft.splice(i,1);renderOrderDraft()}
+function nextOrderNo(){return String(state.orders.length+1).padStart(2,"0")}
+async function saveOrder(){const party=val("party").trim();if(!party)return alert("Party Name required");if(!state.orderDraft.length)return alert("Add at least one item");const o={order_no:nextOrderNo(),party,items:state.orderDraft,created_at:new Date().toLocaleString(),status:"DRAFT"};state.orders.push(o);state.orderDraft=[];window.currentParty="";try{await saveOrders();alert("Order Saved: "+o.order_no);renderOrder()}catch(e){alert("Save failed: "+e.message)}}
+async function deleteOrder(orderNo){if(!confirm("Delete Order "+orderNo+"?"))return;state.orders=state.orders.filter(o=>o.order_no!==orderNo);state.cartons=state.cartons.filter(c=>c.order_no!==orderNo);await saveOrders();await saveCartons();renderOrder()}
+function ordersListHTML(){if(!state.orders.length)return`<p>No saved orders.</p>`;return state.orders.slice().reverse().map(o=>`<div class="line"><div onclick="openOrder('${o.order_no}')"><b>Order ${o.order_no}</b> ${o.status==="COMPLETE"?`<span class="badge complete">COMPLETE</span>`:""}<br>${esc(o.party)}<br>${o.created_at}</div><div>Items: ${o.items.length}<br>Status: ${o.status}</div><button class="danger small" onclick="deleteOrder('${o.order_no}')">Delete</button></div>`).join("")}
+function openOrder(orderNo){const o=state.orders.find(x=>x.order_no===orderNo);if(!o)return;screen().innerHTML=`<div class="card"><h1>Order ${o.order_no} ${o.status==="COMPLETE"?`<span class="badge complete">COMPLETE</span>`:""}</h1><p>${esc(o.party)} · ${o.status}</p>${o.items.map(i=>`<div class="line"><div><b>${esc(i.part_no)}</b><br>${esc(i.vehicle)}</div><div>Qty: ${i.qty}</div></div>`).join("")}<button class="secondary" onclick="renderOrder()">Back</button></div>`}
+function renderPacking(){
+ const pending=state.orders.filter(o=>{updateOrderCompletion(o.order_no,true);return o.status!=="COMPLETE"&&o.items.some((it,i)=>packedQty(o.order_no,i)<Number(it.qty));});
+ screen().innerHTML=`<div class="card"><h1>Packing</h1><select id="packOrder" onchange="selectPackOrder(this.value)"><option value="">Select Order</option>${pending.map(o=>`<option value="${o.order_no}" ${state.selectedOrderNo===o.order_no?"selected":""}>${o.order_no} — ${esc(o.party)}</option>`).join("")}</select></div><div id="packingArea"></div><div id="packingStatus">${packingStatusHTML()}</div>`;
+ if(state.selectedOrderNo)renderPackingForm();
+}
+
+function selectPackOrder(no){state.selectedOrderNo=no;state.cartonDraft=[];renderPacking()}
+function selectedOrder(){return state.orders.find(o=>o.order_no===state.selectedOrderNo)}
+function packingStatusHTML(){
+ const orderNos=[...new Set(state.cartons.map(c=>String(c.order_no||"")).filter(Boolean))];
+ if(!orderNos.length)return"";
+ const rows=orderNos.map(no=>{
+  const o=orderByNo(no);
+  const cs=state.cartons.filter(c=>String(c.order_no)===String(no));
+  const pending=cs.filter(c=>normStatus(c.status)==="PENDING_QC").length;
+  const done=cs.filter(c=>isQCDone(c)).length;
+  const total=Math.max(...cs.map(c=>Number(c.total_cartons)||0),cs.length,0);
+  const created=o.created_at||cs[0]?.created_at||"";
+  const latestQC=Math.max(...cs.map(c=>latestFirstValue(c.qc_at||c.created_at)),0);
+  return {no,party:o.party||cs[0]?.party||"",created,latest:latestQC||latestFirstValue(created),pending,done,total};
+ }).sort((a,b)=>b.latest-a.latest||Number(b.no)-Number(a.no));
+ return`<div class="card"><h2>Packing / QC Status</h2>${rows.map(r=>`<div class="line"><div><b>Order ${esc(r.no)}</b> · <b>${esc(r.party)}</b><br><span class="muted">Date: ${esc(fmtDate(r.created))}</span><br>Total Cartons: ${r.total} | Sent to QC: ${r.pending+r.done} | Pending QC: ${r.pending} | QC Done: ${r.done}</div><div>${r.pending?`<span class="badge pending">PENDING ${r.pending}</span>`:`<span class="badge complete">QC DONE ${r.done}</span>`}</div></div>`).join("")}</div>`;
+}
+function renderPackingForm(){
+  const o=selectedOrder();
+  if(!o)return;
+
+  updateOrderCompletion(o.order_no,true);
+
+  const existing=state.cartons.filter(c=>c.order_no===o.order_no);
+  const cartonNo=window.currentCartonNo||String(existing.length+1);
+
+  document.getElementById("packingArea").innerHTML=`
+    <div class="card">
+      <h2>
+        ${esc(o.party)} / Order ${o.order_no}
+        ${o.status==="COMPLETE"?`<span class="badge complete">COMPLETE</span>`:""}
+      </h2>
+
+      ${
+        (state.user.role==="ADMIN"||state.user.role==="MANAGER")
+        ? `<button class="danger small" onclick="clearPackingForOrder('${o.order_no}')">Clear Packing/QC for this Order</button>`
+        : ""
+      }
+
+      ${balanceTable(o)}
+
+      <p class="hint">Carton No</p>
+      <input
+        id="cartonNo"
+        placeholder="Carton No"
+        value="${cartonNo}"
+        inputmode="numeric"
+        onkeydown="handleCartonEnter(event)"
       >
-        Print All Stickers
-      </button>
-    </div>
-  `;
-}
-function renderQCCartons(party) {
-  const list = state.cartons.filter(c => c.party === party);
 
-  document.getElementById("qcCartons").innerHTML = `
-    <h3>${escapeHTML(party)}</h3>
-    <table>
-      <tr>
-        <th>Carton</th><th>Expected</th><th>Actual</th><th>Status</th><th>Open</th>
-      </tr>
-      ${list.map(c => `
-        <tr>
-          <td>${c.carton_no}/${c.total_cartons}</td>
-          <td>${Number(c.expected_weight || 0).toFixed(2)} kg</td>
-          <td>${Number(c.actual_weight || 0).toFixed(2)} kg</td>
-          <td>${c.status}</td>
-          <td><button onclick="openCartonQC('${c.id}')">Open</button></td>
-        </tr>
-      `).join("")}
-    </table>
-  `;
-}
+      <p class="hint">Empty Carton Weight</p>
+      <input
+        id="tare"
+        type="number"
+        step="0.01"
+        placeholder="Empty Carton Weight kg"
+        value="${window.currentTare||"0.30"}"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();focusId('packItem')}"
+      >
 
-function openCartonQC(id) {
-  state.selectedCartonId = id;
-  renderQCDetails();
-}
+      <p class="hint">Item Packed</p>
+      <select
+        id="packItem"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();focusId('packQty')}"
+      >
+        <option value="">Select item</option>
 
-function getSelectedCarton() {
-  return state.cartons.find(c => String(c.id) === String(state.selectedCartonId));
-}
+        ${o.items.map((it,i)=>
+          balanceQty(o,i)>0
+          ? `<option value="${i}">${it.part_no} — Balance ${balanceQty(o,i)}</option>`
+          : ""
+        ).join("")}
+      </select>
 
-function renderQCDetails() {
-  const c = getSelectedCarton();
-  if (!c) return;
+      <p class="hint">Packed Qty</p>
+      <input
+        id="packQty"
+        type="number"
+        placeholder="Qty"
+        inputmode="numeric"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addCartonItem()}"
+      >
 
-  document.getElementById("qcDetails").innerHTML = `
-    <div class="info">
-      <b>Party:</b> ${escapeHTML(c.party)}<br>
-      <b>Carton:</b> ${c.carton_no}/${c.total_cartons}<br>
-      <b>Expected:</b> ${Number(c.expected_weight || 0).toFixed(2)} kg<br>
-      <b>Actual:</b> ${Number(c.actual_weight || 0).toFixed(2)} kg<br>
-      <b>Status:</b> ${c.status}
+      <button onclick="addCartonItem()">ADD TO CARTON</button>
     </div>
 
-    <table>
-      <tr>
-        <th>Part</th><th>Item</th><th>Qty</th>
-      </tr>
-      ${(c.items || []).map(it => `
-        <tr>
-          <td>${escapeHTML(it.part_no)}</td>
-          <td>${escapeHTML(it.model)}</td>
-          <td>${it.qty}</td>
-        </tr>
-      `).join("")}
-    </table>
+    <div id="cartonDraftBox"></div>
 
-    <input id="actualWeight" type="number" step="0.01" placeholder="Actual Weight" value="${c.actual_weight || ""}" onkeydown="if(event.key==='Enter') saveQC()">
-
-    <button class="green" onclick="saveQC()">PASS / RECHECK</button>
-
-    ${c.status === "PASS" ? stickerHTML(c) : `<p class="bad">Sticker only after PASS</p>`}
+    <div class="card">
+      <button class="green" onclick="sendCartonsToQC()">SEND TO QC</button>
+    </div>
   `;
-}
-function quickQC(id, index) {
 
-  const c =
-    state.cartons.find(
-      x => String(x.id) === String(id)
-    );
+  renderCartonDraft();
 
-  if (!c) return;
-
-  const input =
-    document.getElementById(
-      "qc_" + id
-    );
-
-  if (!input) return;
-
-  const actual =
-    Number(input.value);
-
-  if (!actual) return;
-
-  const diff =
-    Math.abs(
-      actual -
-      Number(
-        c.expected_weight || 0
-      )
-    );
-
-  c.actual_weight =
-    actual;
-
-  c.status =
-    diff <= 0.30
-      ? "PASS"
-      : "RECHECK";
-
-  saveLocal();
-
-  renderQCOrderCards(c.party);
-
-  setTimeout(() => {
-
-    const all =
-      document.querySelectorAll(
-        '[id^="qc_"]'
-      );
-
-    const next =
-      all[index + 1];
-
-    if (next) {
-
-      next.focus();
-
-      next.select();
-
+  setTimeout(()=>{
+    const c=document.getElementById("cartonNo");
+    if(c){
+      c.focus();
+      c.select();
     }
-
-  }, 50);
-
+  },50);
 }
-function saveQC() {
-  const c = getSelectedCarton();
-  if (!c) return;
 
-  const actual = Number(val("actualWeight"));
-  if (!actual) return alert("Enter actual weight");
-
-  const diff = Math.abs(actual - Number(c.expected_weight || 0));
-
-  c.actual_weight = actual;
-  c.status = diff <= 0.30 ? "PASS" : "RECHECK";
-
-  saveLocal();
-  alert("QC Updated: " + c.status);
-  renderQCDetails();
+async function clearPackingForOrder(orderNo){
+ if(!confirm("Clear all packing/QC cartons for Order "+orderNo+"?")) return;
+ state.cartons=state.cartons.filter(c=>c.order_no!==orderNo);
+ const o=state.orders.find(x=>x.order_no===orderNo);
+ if(o) o.status="DRAFT";
+ await saveOrders();
+ await saveCartons();
+ renderPacking();
 }
-function printSticker(id) {
-  const current = state.cartons.find(x => String(x.id) === String(id));
-  if (!current) return;
+function balanceTable(o){
+  return`
+    <table>
+      <tr>
+        <th>SKU</th>
+        <th>Order</th>
+        <th>Packed</th>
+        <th>Balance</th>
+      </tr>
 
-  const branding = document.getElementById("brandToggle")?.checked;
-
-  const all = state.cartons.filter(x => x.party === current.party);
-
-  const html = `
-  <html>
-  <head>
-    <title>Carton Stickers</title>
-
-    <style>
-      body{
-        margin:0;
-        padding:0;
-        font-family:Arial;
-        background:white;
-      }
-
-      ..sticker{
-  width:100mm;
-  height:100mm;
-
-  background:white;
-
-  border:2px solid #111;
-  border-radius:0;
-
-  padding:6mm;
-
-  box-sizing:border-box;
-
-  overflow:hidden;
-
-  page-break-after:always;
-
-  display:flex;
-  flex-direction:column;
-  justify-content:flex-start;
-}
-      }
-
-      .top{
-        display:flex;
-        justify-content:space-between;
-        align-items:flex-start;
-      }
-
-      .brand{
-        font-size:26px;
-        font-weight:bold;
-        color:#d11;
-        line-height:1;
-      }
-
-      .brandSmall{
-        font-size:11px;
-        letter-spacing:5px;
-        color:#111;
-        margin-top:3px;
-      }
-
-      .carton{
-        text-align:right;
-      }
-
-      .cartonBig{
-        font-size:40px;
-        font-weight:bold;
-        line-height:1;
-      }
-
-      .cartonSmall{
-        font-size:22px;
-        font-weight:bold;
-      }
-
-      .grid{
-        display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:6px 18px;
-        margin-top:9px;
-        font-size:14px;
-      }
-
-      table{
-        width:100%;
-        border-collapse:collapse;
-        margin-top:9px;
-        font-size:11px;
-      }
-
-      th,td{
-        border:1px solid #111;
-        padding:4px;
-      }
-
-      th{
-        font-weight:bold;
-        text-align:center;
-      }
-
-      .status{
-        margin-top:8px;
-        border:2px solid #111;
-        text-align:center;
-        padding:7px;
-        font-weight:bold;
-        font-size:19px;
-      }
-
-      .footer{
-        text-align:center;
-        margin-top:7px;
-        font-size:14px;
-        font-weight:bold;
-      }
-
-      @media print{
-
-  @page{
-    size:100mm 100mm;
-    margin:0;
-  }
-
-  html,body{
-    width:100mm;
-    margin:0;
-    padding:0;
-    background:white;
-  }
-
-  body{
-    display:block;
-  }
-
-  .sticker{
-    margin:0;
-    break-after:page;
-  }
-
-}
-    </style>
-  </head>
-
-  <body onload="window.print()">
-    ${all.map(c => {
-      const tare = Number(c.outer_weight || 0);
-      const gross = Number(c.actual_weight || c.expected_weight || 0);
-      const net = gross - tare;
-
-      const sets = (c.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
-
-      return `
-        <div class="sticker">
-          <div class="top">
-            <div>
-              ${
-                branding
-                  ? `
-                    <div class="brand">ceradrive®</div>
-                    <div class="brandSmall">BRAKES</div>
-                  `
-                  : `<div style="height:36px;"></div>`
-              }
-            </div>
-
-            <div class="carton">
-              <span class="cartonBig">${c.carton_no}</span>
-              <span class="cartonSmall">${c.carton_no}/${c.total_cartons}</span>
-            </div>
-          </div>
-
-          <div class="grid">
-            <div><b>CUSTOMER:</b> ${escapeHTML(c.party).toUpperCase()}</div>
-            <div><b>Date:</b> ${new Date().toLocaleDateString()}</div>
-
-            <div><b>Sets:</b> ${sets}</div>
-            <div><b>Net Wt:</b> ${net.toFixed(2)} kg</div>
-
-            <div><b>Tare Wt:</b> ${tare.toFixed(2)} kg</div>
-            <div><b>Gross Wt:</b> ${gross.toFixed(2)} kg</div>
-          </div>
-
-          <table>
-            <tr>
-              <th>SKU</th>
-              <th>MODEL</th>
-              <th>QTY</th>
-            </tr>
-
-            ${(c.items || []).map(i => `
-              <tr>
-                <td>${escapeHTML(i.part_no)}</td>
-                <td>${escapeHTML(i.model)}</td>
-                <td>${i.qty}</td>
-              </tr>
-            `).join("")}
-          </table>
-
-          <div class="status">
-            ${c.status === "PENDING_QC" ? "NOT WEIGHED" : c.status}
-          </div>
-
-          ${
-            branding
-              ? `<div class="footer">Reliable Braking, Always.</div>`
-              : `<div class="footer">&nbsp;</div>`
-          }
-        </div>
-      `;
-    }).join("")}
-  </body>
-  </html>
+      ${o.items.map((it,i)=>`
+        <tr>
+          <td>${it.part_no}</td>
+          <td>${it.qty}</td>
+          <td>${packedQty(o.order_no,i)}</td>
+          <td><b>${balanceQty(o,i)}</b></td>
+        </tr>
+      `).join("")}
+    </table>
   `;
-
-  const w = window.open("", "_blank");
-  w.document.write(html);
-  w.document.close();
 }
-function stickerHTML(c) {
-  return `
-    <button onclick="window.print()">Print Sticker</button>
+function packedQty(no,i){return state.cartons.filter(c=>c.order_no===no).flatMap(c=>c.items||[]).filter(x=>Number(x.order_item_index)===i).reduce((s,x)=>s+Number(x.qty),0)}
+function draftQty(i){return state.cartonDraft.filter(x=>Number(x.order_item_index)===i).reduce((s,x)=>s+Number(x.qty),0)}
+function balanceQty(o,i){return Number(o.items[i].qty)-packedQty(o.order_no,i)-draftQty(i)}
+function addCartonItem(){
+  const o=selectedOrder();
+  if(!o)return;
 
-    <div id="sticker" class="sticker">
-      <h2>CERADRIVE</h2>
-      <h3>${escapeHTML(c.party)}</h3>
+  const idx=Number(val("packItem"));
+  const qty=Number(val("packQty"));
+  const cartonNo=val("cartonNo").trim();
+  const tare=Number(val("tare")||0);
 
-      <b>Carton:</b> ${c.carton_no}/${c.total_cartons}<br>
-      <b>Expected:</b> ${Number(c.expected_weight || 0).toFixed(2)} kg<br>
-      <b>Actual:</b> ${Number(c.actual_weight || 0).toFixed(2)} kg<br>
-      <b>Status:</b> ${c.status}<br>
+  if(!cartonNo)return alert("Enter Carton No");
+
+  window.currentCartonNo=cartonNo;
+  window.currentTare=tare;
+
+  if(val("packItem")===""||!qty)return alert("Select item and qty");
+  if(qty>balanceQty(o,idx))return alert("Qty exceeds balance");
+
+  const beforeBalance=balanceQty(o,idx);
+  const it=o.items[idx];
+
+  state.cartonDraft.push({
+    carton_no:cartonNo,
+    order_item_index:idx,
+    part_no:it.part_no,
+    vehicle:it.vehicle,
+    qty,
+    weight:it.weight,
+    tare
+  });
+
+  const afterBalance=balanceQty(o,idx);
+
+  if(beforeBalance>0 && afterBalance===0){
+    alert("PART COMPLETE: "+it.part_no);
+  }
+
+  const fullOrderComplete=o.items.every((item,i)=>balanceQty(o,i)===0);
+  if(fullOrderComplete){
+    alert("ORDER COMPLETE");
+  }
+
+  renderPackingForm();
+
+  setTimeout(()=>{
+    const c=document.getElementById("cartonNo");
+    if(c){
+      c.focus();
+      c.select();
+    }
+  },50);
+}
+function deleteCartonDraft(i){state.cartonDraft.splice(i,1);renderPackingForm()}
+function renderCartonDraft(){const box=document.getElementById("cartonDraftBox");if(!box)return;box.innerHTML=`<div class="card"><h2>Carton Draft</h2>${state.cartonDraft.length===0?"<p>No carton items.</p>":state.cartonDraft.map((i,idx)=>`<div class="line"><div><b>Carton ${i.carton_no}</b><br>${i.part_no} x ${i.qty}</div><div>Gross ${(i.qty*i.weight+i.tare).toFixed(2)} kg</div><button class="danger small" onclick="deleteCartonDraft(${idx})">Delete</button></div>`).join("")}</div>`}
+async function sendCartonsToQC(){const o=selectedOrder();if(!o)return;if(!state.cartonDraft.length)return alert("Add carton items");const nos=[...new Set(state.cartonDraft.map(i=>String(i.carton_no)))],total=String(Math.max(...nos.map(n=>Number(n)||0)));nos.forEach(no=>{const items=state.cartonDraft.filter(i=>String(i.carton_no)===no),tare=Number(items[0]?.tare||0),itemWeight=items.reduce((s,i)=>s+i.qty*i.weight,0);state.cartons.push({id:Date.now()+"_"+Math.random().toString(16).slice(2),order_no:o.order_no,party:o.party,carton_no:no,total_cartons:total,items,tare,expected_weight:itemWeight+tare,actual_weight:0,status:"PENDING_QC",packed_by:state.user.username,created_at:new Date().toLocaleString()})});updateOrderCompletion(o.order_no,true);state.cartonDraft=[];state.selectedOrderNo="";window.currentCartonNo="";
+  window.currentTare="0.30";try{await saveOrders();await saveCartons();alert("Sent to QC");renderPacking()}catch(e){alert("Save failed: "+e.message)}}
+function renderQC(){
+ const pending=state.cartons.filter(c=>c.status==="PENDING_QC");const parties=[...new Set(pending.map(c=>c.party))];
+ screen().innerHTML=`<div class="card"><h1>QC</h1><select onchange="renderQCCards(this.value)"><option value="">Select Party</option>${parties.map(p=>`<option>${esc(p)}</option>`).join("")}</select></div><div id="qcArea"></div>`;
+}
+function renderQCCards(party){
+ const list=state.cartons.filter(c=>c.party===party&&c.status==="PENDING_QC");
+ const allForParty=state.cartons.filter(c=>c.party===party);
+ if(!list.length){document.getElementById("qcArea").innerHTML=`<div class="card"><h2>${esc(party)}</h2><h1><span class="badge complete">COMPLETE</span></h1><p>Total Cartons: ${allForParty.length}</p><button class="green" onclick="printPartyStickers('${attr(party)}')">PRINT STICKERS</button><button class="secondary" onclick="generateQCPDF('${attr(party)}')">QC PDF</button></div>`;return;}
+ document.getElementById("qcArea").innerHTML=`
+  <div class="card"><h2>${esc(party)}</h2><p>Pending QC: ${list.length}</p><p class="hint">Pass range = Expected Weight ± ${QC_TOLERANCE_KG.toFixed(2)} kg. Har carton ke liye actual weight mandatory hai. Photo optional hai.</p></div>
+  ${list.map((c,index)=>{
+    const expected=Number(c.expected_weight||0);
+    const low=expected-QC_TOLERANCE_KG;
+    const high=expected+QC_TOLERANCE_KG;
+    return `<div class="card qc-card">
+      <div class="line">
+        <div>
+          <h2>Carton ${c.carton_no}/${c.total_cartons}</h2>
+          ${(c.items||[]).reduce((s,i)=>s+Number(i.qty),0)} sets<br>
+          <b>Expected:</b> ${expected.toFixed(2)} kg<br>
+          <b>Pass Range:</b> ${low.toFixed(2)} – ${high.toFixed(2)} kg
+        </div>
+        <div id="live_${c.id}"><span class="badge pending">NOT WEIGHED</span></div>
+      </div>
+
+      <input class="qc-weight-input" id="qc_${c.id}" type="number" step="0.01" inputmode="decimal" placeholder="Actual Weight kg" oninput="liveQC('${c.id}');checkQCButtons()" onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextQC(${index})}">
+
+      <div class="photo-box">
+        <p class="hint"><b>Carton Photo</b> — optional. Zarurat ho to weighing machine/carton ki photo click karo</p>
+        <input class="qc-photo-input camera-hidden" id="photo_${c.id}" type="file" accept="image/*" capture="environment" onchange="captureQCPhoto('${c.id}', this);checkQCButtons()">
+        <button type="button" class="camera-btn" onclick="openCartonCamera('${c.id}')">📷 OPEN CAMERA</button>
+        <button type="button" class="small secondary" onclick="openCartonCamera('${c.id}')">Retake</button>
+        <div id="photoPreview_${c.id}" class="photo-preview">${c.photo_data?`<img src="${c.photo_data}"><span class="badge pass">PHOTO READY</span>`:`<span class="badge pending">PHOTO OPTIONAL</span>`}</div>
+      </div>
+    </div>`
+  }).join("")}
+  <div class="card" id="qcActionButtons" style="display:none"><button class="green" onclick="saveAllQC('${esc(party)}')">SAVE ALL QC</button></div>`;
+ setTimeout(()=>focusFirstEmptyQC(),50);
+}
+function liveQC(id){
+ const c=state.cartons.find(x=>x.id===id);if(!c)return;
+ const actual=Number(val("qc_"+id)),box=document.getElementById("live_"+id);
+ const expected=Number(c.expected_weight||0);
+ const low=expected-QC_TOLERANCE_KG, high=expected+QC_TOLERANCE_KG;
+ if(!actual){box.innerHTML=`<span class="badge pending">NOT WEIGHED</span><p class="hint">Need ${low.toFixed(2)} – ${high.toFixed(2)} kg</p>`;return}
+ const diff=actual-expected;
+ let st="PASS", detail="OK";
+ if(actual<low){st="RECHECK";detail=`UNDER by ${(low-actual).toFixed(2)} kg`}
+ else if(actual>high){st="RECHECK";detail=`OVER by ${(actual-high).toFixed(2)} kg`}
+ box.innerHTML=`<span class="badge ${st==="PASS"?"pass":"recheck"}">${st}</span><p>Difference: ${diff.toFixed(2)} kg<br>${detail}</p>`
+}
+function focusPhoto(index){const photos=[...document.querySelectorAll(".qc-photo-input")];const p=photos[index];if(p){p.focus()}checkQCButtons()}
+function focusNextQC(index){const inputs=[...document.querySelectorAll(".qc-weight-input")];const n=inputs[index+1];if(n){n.focus();n.select()}else{checkQCButtons();const b=document.querySelector("#qcActionButtons button");if(b)b.focus()}}
+function focusFirstEmptyQC(){const i=[...document.querySelectorAll(".qc-weight-input")].find(x=>!x.value);if(i){i.focus();i.select()}}
+function openCartonCamera(id){
+ const input=document.getElementById("photo_"+id);
+ if(!input)return alert("Camera input not found");
+ input.value="";
+ input.click();
+}
+async function captureQCPhoto(id,input){
+ const file=input.files&&input.files[0]; if(!file)return;
+ const c=state.cartons.find(x=>x.id===id); if(!c)return;
+ try{
+   const data=await resizeImageToDataURL(file,700,0.60);
+   c.photo_data=data;
+   c.photo_name=`carton_${c.order_no}_${c.carton_no}_${Date.now()}.jpg`;
+   const box=document.getElementById("photoPreview_"+id);
+   if(box)box.innerHTML=`<img src="${data}"><span class="badge pass">PHOTO READY</span>`;
+   toast("Photo attached");
+ }catch(e){alert("Photo capture failed: "+e.message)}
+}
+function resizeImageToDataURL(file,maxSize=900,quality=0.72){
+ return new Promise((resolve,reject)=>{
+  const reader=new FileReader();
+  reader.onerror=()=>reject(new Error("Could not read photo"));
+  reader.onload=()=>{
+    const img=new Image();
+    img.onerror=()=>reject(new Error("Could not load photo"));
+    img.onload=()=>{
+      const scale=Math.min(1,maxSize/Math.max(img.width,img.height));
+      const canvas=document.createElement("canvas");
+      canvas.width=Math.max(1,Math.round(img.width*scale));
+      canvas.height=Math.max(1,Math.round(img.height*scale));
+      const ctx=canvas.getContext("2d");
+      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      resolve(canvas.toDataURL("image/jpeg",quality));
+    };
+    img.src=reader.result;
+  };
+  reader.readAsDataURL(file);
+ });
+}
+function checkQCButtons(){
+ const inputs=[...document.querySelectorAll(".qc-weight-input")];
+ const allWeights=inputs.length>0&&inputs.every(i=>Number(i.value)>0);
+ const btn=document.getElementById("qcActionButtons");
+ if(btn)btn.style.display=allWeights?"block":"none";
+}
+async function saveAllQC(party){
+ const list=state.cartons.filter(c=>c.party===party&&c.status==="PENDING_QC");
+ if(!list.length)return alert("No pending QC cartons");
+ for(const c of list){
+  const actual=Number(val("qc_"+c.id));
+  if(!actual)return alert("Fill actual weight for carton "+c.carton_no);
+  c.party=normText(c.party);
+  c.actual_weight=actual;
+  if(c.photo_data){
+    c.qc_photo_taken_at=c.qc_photo_taken_at||new Date().toLocaleString();
+  }
+  c.qc_by=state.user.username;
+  c.qc_at=new Date().toLocaleString();
+  c.status=Math.abs(actual-Number(c.expected_weight))<=QC_TOLERANCE_KG?"PASS":"RECHECK";
+ }
+ [...new Set(list.map(c=>c.order_no))].forEach(no=>updateOrderCompletion(no,true));
+ try{
+  localStorage.setItem("orders_v7_backup_before_qc",JSON.stringify(state.orders));
+  localStorage.setItem("cartons_v7_backup_before_qc",JSON.stringify(state.cartons));
+  await saveCartonsSafe();
+  await saveOrdersSafe();
+  alert("QC Saved");
+  state.screen="STICKERS";
+  renderApp();
+ }catch(e){alert("QC save failed: "+e.message)}
+}
+
+function renderSkuMaster(){
+  screen().innerHTML=`
+    <div class="card">
+      <h1>SKU Master V7.4</h1>
+
+      <input id="skuPart" placeholder="Part No">
+      <input id="skuVehicle" placeholder="Vehicle / Model">
+      <input id="skuWeight" type="number" step="0.01" placeholder="Weight per set">
+      <input id="skuMRP" type="number" placeholder="MRP">
+
+      <button onclick="addSku()">ADD / UPDATE SKU</button>
 
       <hr>
 
-      ${(c.items || []).map(i => `${escapeHTML(i.part_no)} ${escapeHTML(i.model)} — ${i.qty}`).join("<br>")}
+      <h3>Excel Import</h3>
+      <p class="muted">Columns: Part No, Vehicle, Weight, MRP, Dealer, Export</p>
+      <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" onchange="importExcel(event)">
+    </div>
+
+    <div class="card">
+      <input id="skuFilter" placeholder="Search SKU" oninput="renderSkuList()">
+      <div id="skuList"></div>
     </div>
   `;
-}
-function renderSaved() {
 
-  const saved = state.cartons.filter(
-    c => c.status === "PASS" || c.status === "RECHECK"
+  renderSkuList();
+}
+async function addSku(){const part_no=val("skuPart").trim();if(!part_no)return alert("Part No required");const obj={part_no,vehicle:val("skuVehicle"),weight:Number(val("skuWeight")||0),mrp:Number(val("skuMRP")||0),dealer:0,export_price:0,active:1};const idx=state.skus.findIndex(s=>String(s.part_no).toLowerCase()===part_no.toLowerCase());if(idx>=0)state.skus[idx]=obj;else state.skus.push(obj);try{await saveSkus();renderSkuMaster()}catch(e){alert("Save failed: "+e.message)}}
+function renderSkuList(){
+  const box=document.getElementById("skuList");
+  if(!box)return;
+
+  const q=(val("skuFilter")||"").toLowerCase();
+
+  const list=state.skus.filter(s=>
+    String(s.part_no).toLowerCase().includes(q) ||
+    String(s.vehicle||"").toLowerCase().includes(q)
   );
 
-  main(`
-    <div class="card">
+  if(!list.length){
+    box.innerHTML="<p>No SKU found.</p>";
+    return;
+  }
 
-      <h2>Saved / Completed</h2>
-
-      ${
-        !saved.length
-        ? `<p>No completed cartons.</p>`
-        : `
-
-        <table>
-          <tr>
-            <th>Party</th>
-            <th>Carton</th>
-            <th>Status</th>
-            <th>Gross</th>
-            <th>Actual</th>
-          </tr>
-
-          ${saved.map(c => `
-            <tr>
-
-              <td>
-                ${escapeHTML(c.party)}
-              </td>
-
-              <td>
-                ${c.carton_no}/${c.total_cartons}
-              </td>
-
-              <td>
-                ${c.status}
-              </td>
-
-              <td>
-                ${Number(c.expected_weight || 0).toFixed(2)}
-              </td>
-
-              <td>
-                ${Number(c.actual_weight || 0).toFixed(2)}
-              </td>
-
-            </tr>
-          `).join("")}
-
-        </table>
-
-        `
-      }
-
+  box.innerHTML=list.map(s=>`
+    <div class="sku-row">
+      <div class="sku-part"><b>${esc(s.part_no)}</b></div>
+      <div class="sku-vehicle">${esc(s.vehicle||"")}</div>
+      <div class="sku-weight">${Number(s.weight||0).toFixed(2)} kg</div>
+      <button class="small secondary sku-edit-btn" onclick="editSku('${attr(s.part_no)}')">EDIT</button>
     </div>
-  `);
-
+  `).join("");
 }
+function editSku(partNo){
+  const s=state.skus.find(x=>
+    String(x.part_no).toLowerCase()===String(partNo).toLowerCase()
+  );
 
-async function saveLocal() {
-  localStorage.setItem("ceradrive_state", JSON.stringify(state));
-
-  try {
-    await fetch("/api/cartons", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        cartons: state.cartons || []
-      })
-    });
-  } catch (e) {
-    console.log("Online save failed");
+  if(!s){
+    alert("SKU not found");
+    return;
   }
+
+  document.getElementById("skuPart").value=s.part_no || "";
+  document.getElementById("skuVehicle").value=s.vehicle || "";
+  document.getElementById("skuWeight").value=s.weight || "";
+  document.getElementById("skuMRP").value=s.mrp || "";
+
+  document.getElementById("skuPart").focus();
+  document.getElementById("skuPart").select();
+
+  toast("Editing "+s.part_no);
 }
-async function loadOnlineCartons() {
-  try {
-    const res = await fetch("/api/cartons");
-    const data = await res.json();
+async function importExcel(e){
+ const file=e.target.files[0];if(!file)return;toast("Importing...");
+ const data=await file.arrayBuffer();const wb=XLSX.read(data);const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+ const imports=[],dups=[];
+ rows.forEach((r,i)=>{const part_no=String(r["Part No"]||r["part_no"]||r["SKU"]||"").trim();if(!part_no)return;const obj={part_no,vehicle:String(r["Vehicle"]||r["Model"]||r["vehicle"]||"").trim(),weight:Number(r["Weight"]||r["weight"]||0),mrp:Number(r["MRP"]||r["mrp"]||0),dealer:Number(r["Dealer"]||0),export_price:Number(r["Export"]||0),active:1};if(state.skus.some(s=>String(s.part_no).toLowerCase()===part_no.toLowerCase()))dups.push(obj);else imports.push(obj);});
+ let override=false;if(dups.length){override=confirm(`${dups.length} duplicate SKU found. OK = Override Existing, Cancel = Skip Duplicates`)}
+ imports.forEach(x=>state.skus.push(x));
+ if(override){dups.forEach(x=>{const idx=state.skus.findIndex(s=>String(s.part_no).toLowerCase()===String(x.part_no).toLowerCase());if(idx>=0)state.skus[idx]=x;});}
+ await saveSkus();alert(`Import complete. New: ${imports.length}, ${override?"Overridden":"Skipped duplicates"}: ${dups.length}`);renderSkuMaster();
+}
 
-    if (data.ok && Array.isArray(data.cartons)) {
-      state.cartons = data.cartons;
 
-      localStorage.setItem(
-        "ceradrive_state",
-        JSON.stringify(state)
-      );
-    }
-  } catch (e) {
-    console.log("Online load failed", e);
+function historyId(prefix, orderNo){return String(prefix||"h")+"_"+String(orderNo||"x").replace(/[^a-zA-Z0-9_-]/g,"_")}
+function toggleHistoryDetails(id){
+ const el=document.getElementById(id);
+ if(!el)return;
+ const isOpen=el.style.display==="block";
+ el.style.display=isOpen?"none":"block";
+ const btn=document.querySelector(`[data-toggle="${id}"]`);
+ if(btn)btn.textContent=isOpen?"▼ View Details":"▲ Hide Details";
+}
+function renderHistory(){screen().innerHTML=`<div class="card"><h1>History</h1><input placeholder="Search party/order/carton" oninput="historyList(this.value)"><div id="historyBox"></div></div>`;historyList("")}
+function latestOrderQC(orderNo){
+ const qcs=state.cartons.filter(c=>String(c.order_no)===String(orderNo)&&c.qc_at).map(c=>c.qc_at);
+ return qcs.length?qcs[qcs.length-1]:"-";
+}
+function historyList(q){
+ q=String(q||"").toLowerCase();
+ const orders=state.orders.filter(o=>String(o.party).toLowerCase().includes(q)||String(o.order_no).includes(q)||String(o.status).toLowerCase().includes(q));
+ const cartons=state.cartons.filter(c=>String(c.party).toLowerCase().includes(q)||String(c.order_no).includes(q)||String(c.carton_no).includes(q)||String(c.status).toLowerCase().includes(q));
+ const orderMap=new Map();
+ cartons.forEach(c=>{
+   const key=String(c.order_no||"");
+   if(!orderMap.has(key)){
+     const o=state.orders.find(x=>String(x.order_no)===key)||{};
+     orderMap.set(key,{order:o,cartons:[]});
+   }
+   orderMap.get(key).cartons.push(c);
+ });
+ const groupedQC=[...orderMap.values()].sort((a,b)=>{
+   const ao=a.order||{},bo=b.order||{};
+   const ad=latestFirstValue(latestOrderQC(ao.order_no||a.cartons[0]?.order_no)||ao.created_at||a.cartons[0]?.created_at);
+   const bd=latestFirstValue(latestOrderQC(bo.order_no||b.cartons[0]?.order_no)||bo.created_at||b.cartons[0]?.created_at);
+   return bd-ad || Number(bo.order_no||0)-Number(ao.order_no||0);
+ });
+ const sortedOrders=orders.slice().sort((a,b)=>latestFirstValue(b.created_at)-latestFirstValue(a.created_at)||Number(b.order_no||0)-Number(a.order_no||0));
+ document.getElementById("historyBox").innerHTML=`
+   <h2>Orders</h2>
+   ${sortedOrders.map(o=>{
+     const id=historyId("ord",o.order_no);
+     const items=o.items||[];
+     const totalQty=items.reduce((sum,i)=>sum+Number(i.qty||0),0);
+     return `<div class="line history-compact-card"><div class="history-summary-row" onclick="toggleHistoryDetails('${id}')"><div><b>Order ${esc(o.order_no)}</b><br><b>${esc(o.party)}</b><br><span class="muted">Date: ${esc(fmtDate(o.created_at,true))}</span><br><span class="muted">Status: ${esc(o.status||"")} | Items: ${items.length} | Qty: ${totalQty}</span></div><button class="small secondary" data-toggle="${id}" onclick="event.stopPropagation();toggleHistoryDetails('${id}')">▼ View Details</button></div><div id="${id}" class="history-details"><div class="qc-carton-list">${items.length?items.map((i,idx)=>`<div class="qc-carton-row"><b>${idx+1}. ${esc(i.part_no)}</b><br>${esc(i.vehicle||"")} | Qty: ${esc(i.qty||0)} | Weight: ${Number(i.weight||0).toFixed(2)} kg</div>`).join(""):`<div class="qc-carton-row">No item detail</div>`}</div></div></div>`;
+   }).join("")}
+   <h2>Cartons/QC</h2>
+   ${groupedQC.map(g=>{
+     const o=g.order||{};
+     const first=g.cartons[0]||{};
+     const cs=g.cartons.slice().sort((a,b)=>Number(a.carton_no)-Number(b.carton_no));
+     const orderNo=o.order_no||first.order_no||"-";
+     const party=o.party||first.party||"-";
+     const qcDate=latestOrderQC(orderNo);
+     const pass=cs.filter(c=>normStatus(c.status)==="PASS").length;
+     const recheck=cs.filter(c=>normStatus(c.status)==="RECHECK").length;
+     const id=historyId("qc",orderNo);
+     return `<div class="line history-compact-card"><div class="history-summary-row" onclick="toggleHistoryDetails('${id}')"><div><b>Order ${esc(orderNo)}</b><br><b>${esc(party)}</b><br><span class="muted">Order Date: ${esc(fmtDate(o.created_at||first.created_at,true))}</span><br><span class="muted">QC Date: ${esc(fmtDate(qcDate,true))}</span><br><span class="muted">Cartons: ${cs.length} | PASS: ${pass} | RECHECK: ${recheck}</span></div><button class="small secondary" data-toggle="${id}" onclick="event.stopPropagation();toggleHistoryDetails('${id}')">▼ View Details</button></div><div id="${id}" class="history-details"><div class="qc-carton-list">${cs.map(c=>`<div class="qc-carton-row"><b>${esc(c.carton_no)}/${esc(c.total_cartons)}</b> — ${esc(c.status||"")}<br>Expected: ${Number(c.expected_weight||0).toFixed(2)} kg | Actual: ${Number(c.actual_weight||0).toFixed(2)} kg<br>${c.photo_data?"📷 Photo Saved":"No photo"}${c.photo_data?`<br><img class="history-photo" src="${c.photo_data}">`:""}</div>`).join("")}</div></div></div>`;
+   }).join("")}
+ `;
+}
+function renderStickers(){
+ const done=state.cartons.filter(isQCDone).map(c=>{c.status=normStatus(c.status)==="RECHECK"?"RECHECK":"PASS";c.party=normText(c.party);return c});
+ const groupMap=new Map();
+ done.forEach(c=>{
+  const key=String(c.order_no||partyKey(c.party));
+  if(!groupMap.has(key)){
+   const o=orderByNo(c.order_no);
+   groupMap.set(key,{order_no:c.order_no||"-",party:o.party||c.party,created_at:o.created_at||c.created_at||"",cartons:[]});
   }
+  groupMap.get(key).cartons.push(c);
+ });
+ const groups=[...groupMap.values()].sort((a,b)=>latestFirstValue(b.created_at)-latestFirstValue(a.created_at)||Number(b.order_no)-Number(a.order_no));
+ screen().innerHTML=`<div class="card"><h1>Stickers</h1><p class="hint">Latest order first. QC complete cartons yaha order-wise dikhenge.</p><label><input type="checkbox" id="stickerLogoToggle" checked style="width:auto"> Print Ceradrive Logo</label>${!groups.length?"<p>No QC completed cartons.</p>":groups.map(g=>{const cs=g.cartons.sort((a,b)=>Number(a.carton_no)-Number(b.carton_no));const total=Math.max(...cs.map(c=>Number(c.total_cartons)||0),cs.length,0);return`<div class="line"><div><b>Order ${esc(g.order_no)}</b> · <b>${esc(g.party)}</b><br><span class="muted">Date: ${esc(fmtDate(g.created_at))}</span><br>Total Cartons: ${total} | QC Done: ${cs.length}<br>${cs.map(c=>`<span class="carton-row">${esc(c.carton_no)}/${esc(c.total_cartons)}</span>`).join("")}</div><button class="small green" onclick="printOrderStickers('${attr(g.order_no)}')">PRINT ORDER</button><button class="small secondary" onclick="generateQCPDF('${attr(g.party)}')">QC PDF</button></div>`}).join("")}</div>`;
 }
-function moveNext(e, nextId) {
-  if (e.key !== "Enter") return;
-  e.preventDefault();
+function printPartyStickers(party){const key=partyKey(party);const list=state.cartons.filter(c=>partyKey(c.party)===key&&isQCDone(c)).sort((a,b)=>Number(a.carton_no)-Number(b.carton_no));if(!list.length)return alert("No QC completed cartons found for "+party);const branding=document.getElementById("stickerLogoToggle")?.checked??true;printStickerList(list,branding)}
+function printOrderStickers(orderNo){const list=state.cartons.filter(c=>String(c.order_no)===String(orderNo)&&isQCDone(c)).sort((a,b)=>Number(a.carton_no)-Number(b.carton_no));if(!list.length)return alert("No QC completed cartons found for Order "+orderNo);const branding=document.getElementById("stickerLogoToggle")?.checked??true;printStickerList(list,branding)}
+function printStickerList(all,branding=true){const html=`<html><head><title>Stickers</title><style>@page{size:100mm 100mm;margin:0}body{margin:0;font-family:Arial}.sticker{width:100mm;height:100mm;padding:7mm;box-sizing:border-box;border:2px solid #111;page-break-after:always}.top{display:flex;justify-content:space-between}.brandimg{max-width:170px;max-height:55px}.smalln{font-size:24px;font-weight:bold;white-space:nowrap}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}td,th{border:1px solid #111;padding:4px}.status{text-align:center;border:2px solid #111;margin-top:8px;padding:7px;font-weight:bold}</style></head><body onload="window.print()">${all.map(c=>{const tare=Number(c.tare||0),gross=Number(c.actual_weight||c.expected_weight||0),net=gross-tare;return`<div class="sticker"><div class="top"><div>${branding?`<img src="/assets/logo.jpeg" class="brandimg">`:""}</div><div><span class="smalln">${c.carton_no}/${c.total_cartons}</span></div></div><p><b>CUSTOMER:</b> ${esc(c.party).toUpperCase()}<br><b>Net:</b> ${net.toFixed(2)} kg &nbsp; <b>Tare:</b> ${tare.toFixed(2)} kg<br><b>Gross:</b> ${gross.toFixed(2)} kg</p><table><tr><th>SKU</th><th>MODEL</th><th>QTY</th></tr>${(c.items||[]).map(i=>`<tr><td>${esc(i.part_no)}</td><td>${esc(i.vehicle||"")}</td><td>${i.qty}</td></tr>`).join("")}</table><div class="status">${c.status}</div></div>`}).join("")}</body></html>`;const w=window.open("","_blank");w.document.write(html);w.document.close()}
 
-  const el = document.getElementById(nextId);
-  if (el) el.focus();
-}
+function generateQCPDF(party){const key=partyKey(party);const list=state.cartons.filter(c=>partyKey(c.party)===key);const html=`<html><head><title>QC Report</title><style>body{font-family:Arial;padding:24px}img{max-width:220px}.qcimg{width:95px;max-height:80px;object-fit:cover}table{width:100%;border-collapse:collapse;margin-top:15px}td,th{border:1px solid #333;padding:8px;font-size:12px}h1{margin-bottom:0}@media print{button{display:none}}</style></head><body><img src="/assets/logo.jpeg"><h1>QC Report</h1><p><b>Party:</b> ${esc(party)}<br><b>Date:</b> ${new Date().toLocaleString()}</p><button onclick="window.print()">Print / Save PDF</button><table><tr><th>Order</th><th>Carton</th><th>SKU / Model</th><th>Qty</th><th>Expected</th><th>Actual</th><th>Diff</th><th>Status</th><th>Photo</th></tr>${list.map(c=>(c.items||[]).map((i,idx)=>`<tr><td>${c.order_no}</td><td>${c.carton_no}/${c.total_cartons}</td><td>${esc(i.part_no)}<br>${esc(i.vehicle||"")}</td><td>${i.qty}</td><td>${Number(c.expected_weight||0).toFixed(2)}</td><td>${Number(c.actual_weight||0).toFixed(2)}</td><td>${(Number(c.actual_weight||0)-Number(c.expected_weight||0)).toFixed(2)}</td><td>${c.status}</td><td>${idx===0&&c.photo_data?`<img class="qcimg" src="${c.photo_data}">`:""}</td></tr>`).join("")).join("")}</table></body></html>`;const w=window.open("","_blank");w.document.write(html);w.document.close()}
+function screen(){return document.getElementById("screenArea")}function val(id){return document.getElementById(id)?.value||""}function focusId(id){document.getElementById(id)?.focus()}function esc(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}function attr(v){return esc(v).replace(/'/g,"&#39;")}
 
-function main(html) {
-  document.getElementById("main").innerHTML = html;
-}
 
-function val(id) {
-  return document.getElementById(id)?.value || "";
-}
+function handleCartonEnter(event){
+  if(event.key!=="Enter")return;
 
-function escapeHTML(v) {
-  return String(v || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+  event.preventDefault();
 
-function injectStyle() {
-  const style = document.createElement("style");
+  const current=val("cartonNo").trim();
 
-  style.innerHTML = `
-    body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;color:#111}
-    .wrap{max-width:1100px;margin:auto;padding:30px 20px}
-    .card{background:white;padding:22px;border-radius:14px;box-shadow:0 2px 10px #0001;margin-bottom:18px}
-    .top{display:flex;justify-content:space-between;align-items:center;gap:20px}
+  if(!current){
+    focusId("cartonNo");
+    return;
+  }
 
-    input,select,button{
-      width:100%;padding:13px;margin:8px 0;border-radius:10px;
-      border:1px solid #ccc;font-size:16px;box-sizing:border-box
-    }
-
-    button{background:#304ffe;color:white;border:none;font-weight:bold;cursor:pointer}
-    .green{background:#2e7d32}
-    .danger{background:#a33}
-
-    .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
-    .tabs button{background:white;color:#111;border:1px solid #ddd}
-    .tabs button.active{background:#304ffe;color:white}
-
-    .row{display:grid;grid-template-columns:2fr 1fr;gap:10px}
-    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-    .row4{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px}
-
-    .searchBox{position:relative}
-    .suggest{
-      position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #ddd;
-      border-radius:12px;max-height:220px;overflow:auto;z-index:999;margin-top:4px;box-shadow:0 4px 12px #0002
-    }
-    .suggestItem{padding:12px;cursor:pointer;border-bottom:1px solid #f1f1f1;color:#111}
-    .suggestItem:hover{background:#f5f7ff}
-
-    table{width:100%;border-collapse:collapse;margin:12px 0}
-    th,td{border:1px solid #ddd;padding:10px;text-align:left}
-    th{background:#eee}
-
-    .info{background:#f1f5ff;padding:12px;border-radius:10px;margin:10px 0}
-    .line{background:#fafafa;border:1px solid #ddd;border-radius:10px;padding:12px;margin:10px 0}
-    .stat{background:#f1f5ff;padding:20px;border-radius:12px;text-align:center}
-    .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-    .bad{color:#a33;font-weight:bold}
-
-    .sticker{width:360px;border:2px solid #111;padding:18px;margin-top:15px;background:white;color:#111}
-    .sticker h2{text-align:center;letter-spacing:2px}
-
-    @media print{
-      body *{visibility:hidden}
-      #sticker,#sticker *{visibility:visible}
-      #sticker{position:absolute;left:0;top:0}
-    }
-
-    @media(max-width:800px){
-      .row,.row3,.row4,.tabs,.grid4{grid-template-columns:1fr}
-      .top{display:block}
-    }
-    .badgePass{
-  background:#2e7d32;
-  color:white;
-  padding:8px 14px;
-  border-radius:20px;
-  font-size:14px;
-}
-
-.badgeRecheck{
-  background:#c62828;
-  color:white;
-  padding:8px 14px;
-  border-radius:20px;
-  font-size:14px;
-}
-
-.badgePending{
-  background:#f9a825;
-  color:#111;
-  padding:8px 14px;
-  border-radius:20px;
-  font-size:14px;
-}
-  `;
-
-  document.head.appendChild(style);
+  if(window.lastCartonNo!==current){
+    window.lastCartonNo=current;
+    focusId("tare");
+  }else{
+    focusId("packItem");
+  }
 }
