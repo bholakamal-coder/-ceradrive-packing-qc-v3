@@ -38,3 +38,9 @@ V7.7.9 HOTFIX:
 - Part/SKU editing not added; wrong item should be deleted and re-added.
 - Version labels updated to Ceradrive QC Packing App v7.7.9.
 - Previous packing, QC, sticker, camera, history and icon logic preserved.
+
+
+V8.0.2 FIX:
+- Demo SKU auto-load removed.
+- Existing SKU Master cache/D1 data is preserved and reused.
+- SKU search restored with full part number matching.

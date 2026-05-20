@@ -48,7 +48,31 @@ async function init(){
   renderLogin();
 }
 async function api(url,opts={}){const res=await fetch(url,{headers:{"Content-Type":"application/json"},...opts});const text=await res.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!res.ok||data.ok===false)throw new Error(data.error||"API error");return data}
-async function loadAll(){try{const [s,o,c]=await Promise.all([api(API.skus),api(API.orders),api(API.cartons)]);state.skus=s.skus||[];state.orders=o.orders||[];state.cartons=c.cartons||[]}catch(e){state.skus=JSON.parse(localStorage.getItem("skus_v7")||"[]");state.orders=JSON.parse(localStorage.getItem("orders_v7")||"[]");state.cartons=JSON.parse(localStorage.getItem("cartons_v7")||"[]")}if(!state.skus.length){state.skus=[{part_no:"VO101P",vehicle:"SWIFT",weight:1.20,mrp:0,dealer:0,export_price:0,active:1},{part_no:"HP202P",vehicle:"BALENO",weight:1.45,mrp:0,dealer:0,export_price:0,active:1},{part_no:"HE303P",vehicle:"CRETA",weight:1.60,mrp:0,dealer:0,export_price:0,active:1},{part_no:"VO404P",vehicle:"I20",weight:1.30,mrp:0,dealer:0,export_price:0,active:1}]}}
+async function loadAll(){
+  const localSkus=()=>JSON.parse(localStorage.getItem("skus_v7")||"[]");
+  const localOrders=()=>JSON.parse(localStorage.getItem("orders_v7")||"[]");
+  const localCartons=()=>JSON.parse(localStorage.getItem("cartons_v7")||"[]");
+  try{
+    const [s,o,c]=await Promise.all([api(API.skus),api(API.orders),api(API.cartons)]);
+    state.skus=Array.isArray(s.skus)?s.skus:[];
+    state.orders=Array.isArray(o.orders)?o.orders:[];
+    state.cartons=Array.isArray(c.cartons)?c.cartons:[];
+    if(!state.skus.length){
+      const cached=localSkus();
+      if(cached.length){
+        state.skus=cached;
+        api(API.skus,{method:"POST",body:JSON.stringify({skus:state.skus})}).catch(()=>{});
+      }
+    }
+  }catch(e){
+    state.skus=localSkus();
+    state.orders=localOrders();
+    state.cartons=localCartons();
+  }
+  localStorage.setItem("skus_v7",JSON.stringify(state.skus||[]));
+  localStorage.setItem("orders_v7",JSON.stringify(state.orders||[]));
+  localStorage.setItem("cartons_v7",JSON.stringify(state.cartons||[]));
+}
 function toast(msg){let t=document.getElementById("toast");if(!t){t=document.createElement("div");t.id="toast";t.className="toast";document.body.appendChild(t)}t.textContent=msg;clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>t.remove(),1800)}
 async function saveSkus(){toast("Saving SKU...");localStorage.setItem("skus_v7",JSON.stringify(state.skus));await api(API.skus,{method:"POST",body:JSON.stringify({skus:state.skus})});toast("Saved successfully")}
 async function saveOrders(){toast("Saving order...");localStorage.setItem("orders_v7",JSON.stringify(state.orders));await api(API.orders,{method:"POST",body:JSON.stringify({orders:state.orders})});toast("Saved successfully")}
@@ -87,7 +111,7 @@ function renderLogin(){
   app.innerHTML=`
     <div class="login-card">
       <img src="assets/logo.jpeg" class="logo" onerror="this.style.display='none'">
-      <p class="muted">Packing & QC System V8.0.1</p>
+      <p class="muted">Packing & QC System V8.0.2</p>
 
       <input id="loginUser" placeholder="Username">
       <input id="loginPass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter') login()">
@@ -145,8 +169,11 @@ function renderOrder(){
  setTimeout(()=>focusId(window.currentParty?"skuSearch":"party"),50);
 }
 
-function showSkuResults(){const q=val("skuSearch").toLowerCase().trim(),box=document.getElementById("skuResults");state.selectedSku=null;if(!q){box.innerHTML="";document.getElementById("selectedSku").innerHTML="";return}const list=state.skus.filter(s=>Number(s.active??1)!==0&&(String(s.part_no).toLowerCase().includes(q)||String(s.vehicle||"").toLowerCase().includes(q))).slice(0,10);box.innerHTML=list.map(s=>`<div class="result-item" onclick="selectSku('${attr(s.part_no)}')"><span><b>${esc(s.part_no)}</b> — ${esc(s.vehicle||"")}</span><span>${Number(s.weight||0).toFixed(2)} kg</span></div>`).join("")}
-function skuEnter(e){if(e.key!=="Enter")return;e.preventDefault();const q=val("skuSearch").toLowerCase().trim();const m=state.skus.find(s=>Number(s.active??1)!==0&&(String(s.part_no).toLowerCase().includes(q)||String(s.vehicle||"").toLowerCase().includes(q)));if(!m)return alert("SKU Not Found");selectSku(m.part_no)}
+function skuText(s){return `${s.part_no||""} ${s.vehicle||""}`}
+function cleanSearch(x){return String(x||"").toLowerCase().replace(/[^a-z0-9]/g,"")}
+function skuMatch(s,q){const raw=String(q||"").toLowerCase().trim();const clean=cleanSearch(raw);return Number(s.active??1)!==0&&(skuText(s).toLowerCase().includes(raw)||cleanSearch(skuText(s)).includes(clean))}
+function showSkuResults(){const q=val("skuSearch"),box=document.getElementById("skuResults");state.selectedSku=null;if(!q.trim()){box.innerHTML="";document.getElementById("selectedSku").innerHTML="";return}const list=state.skus.filter(s=>skuMatch(s,q)).slice(0,20);box.innerHTML=list.length?list.map(s=>`<div class="result-item" onclick="selectSku('${attr(s.part_no)}')"><span><b>${esc(s.part_no)}</b> — ${esc(s.vehicle||"")}</span><span>${Number(s.weight||0).toFixed(2)} kg</span></div>`).join(""):`<div class="result-item muted">No SKU found. Check SKU Master data.</div>`}
+function skuEnter(e){if(e.key!=="Enter")return;e.preventDefault();const q=val("skuSearch");const m=state.skus.find(s=>skuMatch(s,q));if(!m)return alert("SKU Not Found");selectSku(m.part_no)}
 function selectSku(partNo){const s=state.skus.find(x=>String(x.part_no)===String(partNo));if(!s)return;state.selectedSku=s;document.getElementById("skuSearch").value=`${s.part_no} — ${s.vehicle||""}`;document.getElementById("skuResults").innerHTML="";document.getElementById("selectedSku").innerHTML=`<div class="info-box"><b>${esc(s.part_no)}</b> — ${esc(s.vehicle||"")}<br>Weight: ${Number(s.weight||0).toFixed(2)} kg</div>`;focusId("qty")}
 function addOrderItem(){
  const party=val("party").trim();window.currentParty=party;
@@ -513,7 +540,7 @@ async function saveAllQC(party){
 function renderSkuMaster(){
   screen().innerHTML=`
     <div class="card">
-      <h1>SKU Master V7.4</h1>
+      <h1>SKU Master V8.0.2</h1>
 
       <input id="skuPart" placeholder="Part No">
       <input id="skuVehicle" placeholder="Vehicle / Model">
