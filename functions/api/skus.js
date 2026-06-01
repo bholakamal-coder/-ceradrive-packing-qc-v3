@@ -1,13 +1,59 @@
-function json(data,status=200){return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json"}})}
-function normalizeSku(s){return {part_no:String(s.part_no||s.sku||s.SKU||"").trim(),vehicle:String(s.vehicle||s.model||s.Vehicle||s.Model||"").trim(),weight:Number(s.weight||s.Weight||0),mrp:Number(s.mrp||s.MRP||0),dealer:Number(s.dealer||s.Dealer||0),export_price:Number(s.export_price||s.Export||0),active:Number(s.active??1)}}
-export async function onRequestGet(context){try{const DB=context.env.DB;await DB.prepare(`CREATE TABLE IF NOT EXISTS skus (part_no TEXT PRIMARY KEY, data TEXT, updated_at TEXT)`).run();let cols=[];try{const info=await DB.prepare(`PRAGMA table_info(skus)`).all();cols=(info.results||[]).map(c=>c.name)}catch(e){}
-let skus=[];
-if(cols.includes("data")){const rows=await DB.prepare(`SELECT data FROM skus`).all();skus=(rows.results||[]).map(r=>{try{return JSON.parse(r.data)}catch(e){return null}}).filter(Boolean).map(normalizeSku)}
-else{const rows=await DB.prepare(`SELECT * FROM skus`).all();skus=(rows.results||[]).map(normalizeSku)}
-return json({ok:true,skus})}catch(e){return json({ok:false,error:e.message},500)}}
-export async function onRequestPost(context){try{const DB=context.env.DB;const body=await context.request.json();const skus=(body.skus||[]).map(normalizeSku).filter(s=>s.part_no);await DB.prepare(`CREATE TABLE IF NOT EXISTS skus (part_no TEXT PRIMARY KEY, data TEXT, updated_at TEXT)`).run();let cols=[];try{const info=await DB.prepare(`PRAGMA table_info(skus)`).all();cols=(info.results||[]).map(c=>c.name)}catch(e){}
-if(!cols.includes("data")){try{await DB.prepare(`ALTER TABLE skus ADD COLUMN data TEXT`).run()}catch(e){}}
-if(!cols.includes("updated_at")){try{await DB.prepare(`ALTER TABLE skus ADD COLUMN updated_at TEXT`).run()}catch(e){}}
-await DB.prepare(`DELETE FROM skus`).run();
-for(const s of skus){await DB.prepare(`INSERT OR REPLACE INTO skus (part_no,data,updated_at) VALUES (?,?,?)`).bind(String(s.part_no),JSON.stringify(s),new Date().toISOString()).run()}
-return json({ok:true,saved:skus.length})}catch(e){return json({ok:false,error:e.message},500)}}
+// ── /api/skus — Cloudflare Pages Function ────────────────────────────────────
+//
+// GET  → returns all SKUs as JSON array with updated_at injected into each object
+// POST → UPSERTS provided SKUs only; optional delete_part_nos removes explicit deletes
+// v8.5.2: removed full-table DELETE+INSERT to prevent stale-device overwrite/data loss.
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function parseRow(r) {
+  const obj = JSON.parse(r.data || "{}");
+  obj.updated_at = obj.updated_at || r.updated_at;
+  return obj;
+}
+
+/** @param {EventContext} context */
+export async function onRequestGet(context) {
+  try {
+    const DB   = context.env.DB;
+    const rows = await DB.prepare(`SELECT data, updated_at FROM skus`).all();
+    return json({ ok: true, skus: (rows.results || []).map(parseRow) });
+  } catch (e) {
+    return json({ ok: false, error: e.message }, 500);
+  }
+}
+
+/** @param {EventContext} context */
+export async function onRequestPost(context) {
+  try {
+    const DB   = context.env.DB;
+    const body = await context.request.json();
+    const skus = Array.isArray(body.skus) ? body.skus : [];
+    const deletes = Array.isArray(body.delete_part_nos) ? body.delete_part_nos : [];
+    const now  = new Date().toISOString();
+
+    const stmts = [];
+    for (const partNo of deletes) {
+      stmts.push(DB.prepare(`DELETE FROM skus WHERE part_no = ?`).bind(String(partNo)));
+    }
+    for (const s of skus) {
+      if (!s || !s.part_no) continue;
+      const row = { ...s, updated_at: now };
+      stmts.push(
+        DB.prepare(`INSERT OR REPLACE INTO skus (part_no, data, updated_at) VALUES (?, ?, ?)`).bind(
+          String(row.part_no), JSON.stringify(row), now
+        )
+      );
+    }
+
+    if (stmts.length) await DB.batch(stmts);
+    return json({ ok: true, saved: skus.length, deleted: deletes.length });
+  } catch (e) {
+    return json({ ok: false, error: e.message }, 500);
+  }
+}
