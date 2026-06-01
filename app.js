@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Ceradrive Packing & QC System — v8.5.3
+   Ceradrive Packing & QC System — v8.5.4
    Refactored for production quality, maintainability, and scalability.
 
    ARCHITECTURE OVERVIEW
@@ -417,11 +417,28 @@ async function apiFetch(url, opts = {}) {
 function apiGet(url)        { return apiFetch(url); }
 function apiPost(url, body) { return apiFetch(url, { method: "POST", body: JSON.stringify(body) }); }
 
-/** Push one named section to the server. */
+function _recTime(x) { return Date.parse(x?.updated_at || x?.created_at || 0) || 0; }
+
+/** Push only new/newer records where possible, to avoid stale-device overwrites. */
 async function _pushSection(section) {
-  if (section === "skus")    return apiPost(API.skus,    { skus:    state.skus    });
-  if (section === "orders")  return apiPost(API.orders,  { orders:  state.orders  });
-  if (section === "cartons") return apiPost(API.cartons, { cartons: state.cartons });
+  if (section === "skus") {
+    const remote = await apiGet(API.skus).catch(() => ({ skus: [] }));
+    const rmap = new Map((remote.skus || []).map(x => [String(x.part_no), x]));
+    const changed = state.skus.filter(x => !rmap.has(String(x.part_no)) || _recTime(x) >= _recTime(rmap.get(String(x.part_no))));
+    return changed.length ? apiPost(API.skus, { skus: changed }) : { ok: true, saved: 0 };
+  }
+  if (section === "orders") {
+    const remote = await apiGet(API.orders).catch(() => ({ orders: [] }));
+    const rmap = new Map((remote.orders || []).map(x => [String(x.order_no), x]));
+    const changed = state.orders.filter(x => !rmap.has(String(x.order_no)) || _recTime(x) >= _recTime(rmap.get(String(x.order_no))));
+    return changed.length ? apiPost(API.orders, { orders: changed }) : { ok: true, saved: 0 };
+  }
+  if (section === "cartons") {
+    const remote = await apiGet(API.cartons).catch(() => ({ cartons: [] }));
+    const rmap = new Map((remote.cartons || []).map(x => [String(x.id), x]));
+    const changed = state.cartons.filter(x => !rmap.has(String(x.id)) || _recTime(x) >= _recTime(rmap.get(String(x.id))));
+    return changed.length ? apiPost(API.cartons, { cartons: changed }) : { ok: true, saved: 0 };
+  }
   throw new Error("Unknown section: " + section);
 }
 
@@ -456,37 +473,21 @@ async function persistState(sections = "all") {
  */
 async function saveOrdersSafe() {
   saveState();
-  let merged = state.orders;
-  try {
-    const remote  = await apiGet(API.orders);
-    const map     = new Map((remote.orders || []).map(o => [String(o.order_no), o]));
-    state.orders.forEach(o => map.set(String(o.order_no), o));
-    merged         = [...map.values()];
-    state.orders   = merged;
-    saveState();
-  } catch {}
-  await apiPost(API.orders, { orders: merged });
+  await _pushSection("orders");
 }
 
 /** Same pattern for cartons. */
 async function saveCartonsSafe() {
   saveState();
-  let merged = state.cartons;
-  try {
-    const remote   = await apiGet(API.cartons);
-    const map      = new Map((remote.cartons || []).map(c => [String(c.id), c]));
-    state.cartons.forEach(c => map.set(String(c.id), c));
-    merged          = [...map.values()];
-    state.cartons   = merged;
-    saveState();
-  } catch {}
-  await apiPost(API.cartons, { cartons: merged });
+  await _pushSection("cartons");
 }
 
 /** Atomic save for QC: commits carton + order changes in one backend batch. */
-async function saveQCSafe() {
+async function saveQCSafe(changedOrders = [], changedCartons = []) {
   saveState();
-  await apiPost(API.sync, { orders: state.orders, cartons: state.cartons });
+  const ordersToSave = changedOrders.length ? changedOrders : state.orders;
+  const cartonsToSave = changedCartons.length ? changedCartons : state.cartons;
+  await apiPost(API.sync, { orders: ordersToSave, cartons: cartonsToSave });
 }
 
 /* Convenience wrappers used by UI buttons */
@@ -831,7 +832,7 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login-card">
       <img src="assets/logo.jpeg" class="logo" onerror="this.style.display='none'">
-      <p class="muted">Ceradrive Packing &amp; QC — v8.5.3</p>
+      <p class="muted">Ceradrive Packing &amp; QC — v8.5.4</p>
       <p class="login-role-hint">Select your role then enter password</p>
       <div class="quick-login-grid">
         <button class="quick-role-btn" onclick="prefillUser('packing')">📦<br><span>PACKING</span></button>
@@ -911,16 +912,19 @@ function canAccess(s) { return tabs().includes(s); }
 
 function go(s) {
   if (!canAccess(s)) { toast("Access denied"); return; }
-  closeMoreMenu();
   state.screen = s;
   renderApp();
-  // Keep the selected page visible immediately after tapping More-menu items.
   requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
 }
 
 function tabIcon(t) {
-  const icons = { ORDER: "📋", PACKING: "📦", QC: "✅", STICKERS: "🏷️", HISTORY: "📜", "SKU MASTER": "🗄️", LOG: "📝", HOME: "🏠" };
+  const icons = { ORDER: "📋", PACKING: "📦", QC: "✅", STICKERS: "🏷️", HISTORY: "📜", "SKU MASTER": "✏️", LOG: "📝", HOME: "🏠" };
   return `<span class="tab-icon">${icons[t] || ""}</span>`;
+}
+
+function tabLabel(t) {
+  if (t === "SKU MASTER") return "SKU EDIT";
+  return t;
 }
 
 function renderApp() {
@@ -935,7 +939,7 @@ function renderApp() {
         <img src="assets/logo.jpeg" class="brand-logo" onerror="this.style.display='none'">
         <div class="brand-info">
           <span class="brand-name">Ceradrive Brakes</span>
-          <span class="brand-sub">Packing &amp; QC v8.5.3</span>
+          <span class="brand-sub">Packing &amp; QC v8.5.5</span>
         </div>
         <div class="brand-right">
           <div id="refreshIndicator" class="refresh-dot" title="Auto-sync active"></div>
@@ -951,16 +955,7 @@ function renderApp() {
         <div class="dash-stat dash-stat-green"><span class="dash-stat-icon">✅</span><div><div class="dash-stat-val">${stats.complete}</div><div class="dash-stat-lbl">Complete</div></div></div>
       </div>
       <nav class="tab-bar" id="mainTabBar">
-        ${t.slice(0, 5).map(x => `<button class="tab-btn ${state.screen === x ? "active" : ""}" onclick="go('${x}')">${tabIcon(x)}<span>${x}</span></button>`).join("")}
-        ${t.length > 5 ? `
-        <div class="tab-more-wrap">
-          <button class="tab-btn ${t.slice(5).includes(state.screen) ? "active" : ""}" onclick="toggleMoreMenu()" id="moreTabBtn">
-            <span class="tab-icon">⋯</span><span>More</span>
-          </button>
-          <div class="tab-more-menu" id="moreMenu">
-            ${t.slice(5).map(x => `<button class="more-menu-item ${state.screen === x ? "active" : ""}" onclick="go('${x}');closeMoreMenu()">${tabIcon(x)}<span>${x}</span></button>`).join("")}
-          </div>
-        </div>` : ""}
+        ${t.map(x => `<button class="tab-btn ${state.screen === x ? "active" : ""}" onclick="go('${x}')">${tabIcon(x)}<span>${tabLabel(x)}</span></button>`).join("")}
       </nav>
     </div>
     <div id="screenArea" class="screen-area"></div>`;
@@ -978,40 +973,15 @@ function renderScreen() {
   if (state.screen === "LOG")         return renderLog();
 }
 
-function toggleMoreMenu() {
-  const menu = document.getElementById("moreMenu");
-  const btn  = document.getElementById("moreTabBtn");
-  if (!menu || !btn) return;
-
-  const willOpen = !menu.classList.contains("open");
-  if (!willOpen) { closeMoreMenu(); return; }
-
-  // Use fixed positioning so the menu is never clipped by the horizontal tab bar
-  // and stays visible on phone screens without the user scrolling up/down.
-  const rect = btn.getBoundingClientRect();
-  const menuWidth = Math.min(190, window.innerWidth - 16);
-  const left = Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth));
-  const top  = Math.min(window.innerHeight - 12, rect.bottom + 6);
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
-  menu.style.right = "auto";
-  menu.style.minWidth = `${menuWidth}px`;
-  menu.classList.add("open");
-}
-function closeMoreMenu() {
-  const menu = document.getElementById("moreMenu");
-  if (!menu) return;
-  menu.classList.remove("open");
-  menu.style.left = "";
-  menu.style.top = "";
-}
+// More menu removed in v8.5.4: all available pages are shown directly in the horizontal tab bar.
+function closeMoreMenu() {}
 
 /* ══════════════════════════════════════════════════════════════
    11. ORDER SCREEN
    ══════════════════════════════════════════════════════════════ */
 
 function renderOrder() {
-  screen().innerHTML = `
+  const orderFormHTML = canCreateOrder() ? `
   <div class="card">
     <div class="card-header"><h2>New Order</h2><p class="muted-sm">Party → SKU → Qty → Add</p></div>
     <div class="form-grid">
@@ -1044,10 +1014,14 @@ function renderOrder() {
     </details>
   </div>
   <div id="orderDraftBox"></div>
-  <div class="card action-card"><button class="green wide-btn" onclick="saveOrder()">💾 Save Order</button></div>
+  <div class="card action-card"><button class="green wide-btn" onclick="saveOrder()">💾 Save Order</button></div>` : `
+  <div class="card"><div class="empty-state">Order create permission not available for this user.</div></div>`;
+  screen().innerHTML = `${orderFormHTML}
   <div class="card"><div class="card-header"><h2>Saved Orders</h2></div>${ordersListHTML()}</div>`;
-  renderOrderDraft();
-  setTimeout(() => focusId(_currentParty ? "skuSearch" : "party"), 50);
+  if (canCreateOrder()) {
+    renderOrderDraft();
+    setTimeout(() => focusId(_currentParty ? "skuSearch" : "party"), 50);
+  }
 }
 
 function showSkuResults() {
@@ -1231,6 +1205,25 @@ function workflowBadge(o) {
   return                         `<span class="wf-badge wf-draft">📋 Draft</span>`;
 }
 
+function canCreateOrder() {
+  const r = state.user?.role;
+  return r === "ADMIN" || r === "MANAGER" || r === "QC";
+}
+function canDeleteOrder() {
+  const r = state.user?.role;
+  return r === "ADMIN" || r === "MANAGER";
+}
+function isOrderEditLocked(o) {
+  if (!o) return true;
+  const ws = o.workflow_status || "DRAFT";
+  if (o.status === "COMPLETE" || ws === "PENDING_QC") return true;
+  return validCartonsForOrder(o).some(c => normStatus(c.status) !== "PENDING_QC") ;
+}
+function canEditOrder(o) {
+  const r = state.user?.role;
+  return (r === "ADMIN" || r === "MANAGER") && !isOrderEditLocked(o);
+}
+
 function canSendToPacking(o) {
   const ws = o.workflow_status || "DRAFT";
   return (state.user.role === "ADMIN" || state.user.role === "MANAGER")
@@ -1257,7 +1250,7 @@ function ordersListHTML() {
         <td class="ot-meta-val">${o.items.length} / ${totalQty}</td>
         <td class="ot-status-val">${workflowBadge(o)}</td>
         <td class="ot-del-val" onclick="event.stopPropagation()">
-          <button class="skt-btn skt-del" onclick="deleteOrder('${o.order_no}')">🗑</button>
+          ${canDeleteOrder() ? `<button class="skt-btn skt-del" onclick="deleteOrder('${o.order_no}')">🗑</button>` : ""}
         </td>
       </tr>`;
     }).join("")}</tbody>
@@ -1269,8 +1262,7 @@ function openOrder(orderNo) {
   if (!o) return;
   const totalQty = (o.items || []).reduce((s, i) => s + Number(i.qty || 0), 0);
   const totalWt  = (o.items || []).reduce((s, i) => s + Number(i.qty || 0) * Number(i.weight || 0), 0);
-  const canEdit  = state.user && (state.user.role === "ADMIN" || state.user.role === "MANAGER");
-  const editAllowed = canEdit && o.status !== "COMPLETE";
+  const editAllowed = canEditOrder(o);
   screen().innerHTML = `
   <div class="card">
     <div class="oo-header">
@@ -1320,6 +1312,7 @@ function openOrder(orderNo) {
 function editOrder(orderNo) {
   const o = getOrder(orderNo);
   if (!o) return;
+  if (!canEditOrder(o)) return toast("Order locked after QC started/completed");
   const ws         = o.workflow_status || "DRAFT";
   const midPacking = (ws === "PACKING" || ws === "READY_TO_PACK") && validCartonsForOrder(o).length > 0;
   if (midPacking && !confirm(
@@ -1387,6 +1380,7 @@ async function updateOrder() {
   if (!orderNo) return toast("No order being edited");
   const o = getOrder(orderNo);
   if (!o) return toast("Order not found");
+  if (!canEditOrder(o)) return toast("Order locked after QC started/completed");
   const party = val("party").trim();
   if (!party)                  return toast("Party Name required");
   if (!state.orderDraft.length) return toast("Add at least one item");
@@ -1411,8 +1405,8 @@ async function updateOrder() {
   _currentParty    = "";
   saveState();
   try {
-    await apiPost(API.orders,  { orders:  state.orders  });
-    if (cartons.length) await apiPost(API.cartons, { cartons: state.cartons });
+    await apiPost(API.orders,  { orders:  [o]  });
+    if (cartons.length) await apiPost(API.cartons, { cartons });
     uiToast(`Order #${orderNo} updated ✓`);
   } catch {
     enqueueOffline("orders");
@@ -1423,6 +1417,7 @@ async function updateOrder() {
 }
 
 async function saveOrder() {
+  if (!canCreateOrder()) return toast("You do not have permission to create orders");
   const party = val("party").trim();
   if (!party)                  return toast("Party Name required");
   if (!state.orderDraft.length) return toast("Add at least one item");
@@ -1432,14 +1427,18 @@ async function saveOrder() {
     party,
     items:           state.orderDraft.map(x => ({ ...x })),
     created_at:      new Date().toISOString(),
+    updated_at:      new Date().toISOString(),
     status:          "DRAFT",
     workflow_status: "DRAFT",
   };
   state.orders.push(o);
   state.orderDraft = [];
   _currentParty    = "";
-  try { await saveOrders(); uiToast("Order Saved: " + o.order_no); renderOrder(); }
-  catch (e) { toast("Save failed: " + e.message); }
+  try {
+    await apiPost(API.orders, { orders: [o] });
+    uiToast("Order Saved: " + o.order_no);
+    renderOrder();
+  } catch (e) { enqueueOffline("orders"); toast("Saved locally — sync failed: " + e.message); renderOrder(); }
 }
 
 async function sendToPacking(orderNo) {
@@ -1449,9 +1448,10 @@ async function sendToPacking(orderNo) {
     toast("Already sent to Packing"); return;
   }
   o.workflow_status = "READY_TO_PACK";
+  o.updated_at = new Date().toISOString();
   saveState();
   try {
-    await apiPost(API.orders, { orders: state.orders });
+    await apiPost(API.orders, { orders: [o] });
     uiToast(`Order #${orderNo} sent to Packing ✓`);
     renderOrder();
   } catch {
@@ -1466,15 +1466,17 @@ async function recallFromPacking(orderNo) {
   if (!o) return;
   if (!confirm(`Recall Order #${orderNo} from Packing?\nAny saved carton drafts for this order will remain.`)) return;
   o.workflow_status = "DRAFT";
+  o.updated_at = new Date().toISOString();
   saveState();
   try {
-    await apiPost(API.orders, { orders: state.orders });
+    await apiPost(API.orders, { orders: [o] });
     toast(`Order #${orderNo} recalled from Packing`);
     renderOrder();
   } catch { enqueueOffline("orders"); renderOrder(); }
 }
 
 async function deleteOrder(orderNo) {
+  if (!canDeleteOrder()) return toast("Only Admin/Manager can delete orders");
   if (!confirm("Delete Order " + orderNo + "?")) return;
   const o = getOrder(orderNo);
   const deleteCartonIds = o ? state.cartons.filter(c => cartonBelongsToOrder(c, o)).map(c => c.id) : [];
@@ -1483,8 +1485,8 @@ async function deleteOrder(orderNo) {
   purgeOrphanCartons();
   saveState();
   try {
-    await apiPost(API.cartons, { cartons: state.cartons, delete_ids: deleteCartonIds });
-    await apiPost(API.orders,  { orders:  state.orders,  delete_order_nos: [orderNo] });
+    await apiPost(API.cartons, { delete_ids: deleteCartonIds });
+    await apiPost(API.orders,  { delete_order_nos: [orderNo] });
   } catch (e) { toast("Deleted locally — server sync failed: " + e.message); }
   renderOrder();
 }
@@ -1742,7 +1744,15 @@ function addCartonItem() {
 
   const beforeBalance = balanceQty(o, idx);
   const it            = o.items[idx];
-  state.cartonDraft.push({ carton_no: cartonNo, tare, order_item_index: idx, part_no: it.part_no, vehicle: it.vehicle, qty, weight: it.weight });
+  const existingDraft = state.cartonDraft.find(x =>
+    String(x.carton_no) === String(cartonNo) && Number(x.order_item_index) === idx
+  );
+  if (existingDraft) {
+    existingDraft.qty = Number(existingDraft.qty || 0) + qty;
+    existingDraft.tare = tare;
+  } else {
+    state.cartonDraft.push({ carton_no: cartonNo, tare, order_item_index: idx, part_no: it.part_no, vehicle: it.vehicle, qty, weight: it.weight });
+  }
 
   if (beforeBalance > 0 && balanceQty(o, idx) === 0) toast("PART COMPLETE: " + it.part_no);
   if (o.items.every((_, i) => balanceQty(o, i) === 0)) toast("ALL ITEMS PACKED — Ready to Send to QC");
@@ -1896,17 +1906,21 @@ async function sendAllCartonsToQC() {
       status:          "PENDING_QC",
       packed_by:       state.user.username,
       created_at:      now,
+      updated_at:      now,
     });
   });
 
   state.cartonDraft    = [];
   _selectedPackIdx     = undefined;
   state.selectedOrderNo = "";
+  o.workflow_status = "PENDING_QC";
   updateOrderCompletion(o.order_no, true);
+  o.updated_at = new Date().toISOString();
 
   try {
     saveState();
-    await apiPost(API.sync, { cartons: state.cartons, orders: state.orders });
+    const newCartons = state.cartons.filter(c => c.created_at === now && sameOrderNo(c.order_no, o.order_no));
+    await apiPost(API.sync, { cartons: newCartons, orders: [o] });
     uiToast(`${cartonNos.length} carton${cartonNos.length !== 1 ? "s" : ""} sent to QC ✓`);
     renderPacking();
   } catch (e) { toast("Save failed: " + e.message); }
@@ -1934,16 +1948,18 @@ async function clearPackingForOrder(orderNo) {
   const o = getOrder(orderNo);
   if (!o) return;
   if (!confirm("Clear all packing/QC cartons for Order " + orderNo + "?")) return;
+  const deleteIds       = validCartonsForOrder(o).map(c => c.id);
   state.cartons         = state.cartons.filter(c => !cartonBelongsToOrder(c, o));
   o.status              = "DRAFT";
+  o.updated_at          = new Date().toISOString();
   o.workflow_status     = "READY_TO_PACK";
   state.cartonDraft     = [];
   _selectedPackIdx       = undefined;
   if (sameOrderNo(state.selectedOrderNo, orderNo)) state.selectedOrderNo = "";
   saveState();
   try {
-    await apiPost(API.cartons, { cartons: state.cartons });
-    await apiPost(API.orders,  { orders:  state.orders  });
+    await apiPost(API.cartons, { delete_ids: deleteIds });
+    await apiPost(API.orders,  { orders:  [o]  });
     toast("Packing cleared for Order " + orderNo);
   } catch { enqueueOffline("cartons"); enqueueOffline("orders"); }
   renderPacking();
@@ -2190,12 +2206,13 @@ async function saveQCOrder(orderNo) {
     c.status = (w >= expected - QC_TOLERANCE_KG && w <= expected + QC_TOLERANCE_KG) ? "PASS" : "RECHECK";
   }
   updateOrderCompletion(orderNo, true);
+  o.updated_at = new Date().toISOString();
   // Snapshot backup before QC commit
   try {
     const backup = { _v: STATE_VERSION, _saved: Date.now(), orders: state.orders, cartons: state.cartons };
     localStorage.setItem(STORAGE.QC_BACKUP, JSON.stringify(backup));
   } catch {}
-  await saveQCSafe();
+  await saveQCSafe([o], list);
   uiToast("QC Saved Successfully");
   renderQC();
 }
@@ -2209,18 +2226,23 @@ async function saveAllQC(party) {
     if (!actual) return toast("Fill actual weight for carton " + c.carton_no);
     c.party         = normText(c.party);
     c.actual_weight = actual;
+    c.updated_at    = new Date().toISOString();
     if (c.photo_data) c.qc_photo_taken_at = c.qc_photo_taken_at || new Date().toLocaleString();
     c.qc_by  = state.user.username;
     c.qc_at  = new Date().toLocaleString();
     c.status = Math.abs(actual - Number(c.expected_weight)) <= QC_TOLERANCE_KG ? "PASS" : "RECHECK";
   }
-  [...new Set(list.map(c => c.order_no))].forEach(no => updateOrderCompletion(no, true));
+  [...new Set(list.map(c => c.order_no))].forEach(no => {
+    updateOrderCompletion(no, true);
+    const oo = getOrder(no); if (oo) oo.updated_at = new Date().toISOString();
+  });
   try {
     try {
       const backup = { _v: STATE_VERSION, _saved: Date.now(), orders: state.orders, cartons: state.cartons };
       localStorage.setItem(STORAGE.QC_BACKUP, JSON.stringify(backup));
     } catch {}
-    await saveQCSafe();
+    const changedOrders = [...new Set(list.map(c => c.order_no))].map(no => getOrder(no)).filter(Boolean);
+    await saveQCSafe(changedOrders, list);
     uiToast("QC Saved Successfully");
     state.screen = "STICKERS";
     renderApp();
@@ -2233,10 +2255,12 @@ async function recallCarton(cartonId, orderNo) {
   if (!confirm(`Recall Carton #${c.carton_no} back to Packing?\n\nThis will remove it from QC pending and allow re-packing.`)) return;
   state.cartons = state.cartons.filter(x => x.id !== cartonId);
   updateOrderCompletion(orderNo, true);
+  const o = getOrder(orderNo);
+  if (o) o.updated_at = new Date().toISOString();
   saveState();
   try {
-    await apiPost(API.cartons, { cartons: state.cartons });
-    await apiPost(API.orders,  { orders:  state.orders  });
+    await apiPost(API.cartons, { delete_ids: [cartonId] });
+    if (o) await apiPost(API.orders,  { orders:  [o]  });
     toast(`Carton #${c.carton_no} recalled — go to Packing to re-pack`);
     renderQCCards(orderNo);
   } catch { enqueueOffline("cartons"); enqueueOffline("orders"); toast("Carton recalled locally — will sync when online"); renderQCCards(orderNo); }
@@ -2451,7 +2475,7 @@ function addDispatchLot(orderNo) {
   if (!o.dispatch_lots) o.dispatch_lots = [];
   o.dispatch_lots.push({ name: name || "", from: fromNo.trim(), to: toNo.trim() });
   saveState();
-  persistState("orders").catch(() => {});
+  apiPost(API.orders, { orders: [o] }).catch(() => enqueueOffline("orders"));
   renderStickers();
 }
 
@@ -2461,7 +2485,7 @@ function deleteDispatchLot(orderNo, idx) {
   if (!confirm("Remove this dispatch lot?")) return;
   o.dispatch_lots.splice(idx, 1);
   saveState();
-  persistState("orders").catch(() => {});
+  apiPost(API.orders, { orders: [o] }).catch(() => enqueueOffline("orders"));
   renderStickers();
 }
 
@@ -2498,7 +2522,7 @@ function printStickerList(all, branding = true, labelSize = "100x150", lot = nul
     const isPass    = st === "PASS";
     const stLbl     = isPass ? "✓  PASS" : "⚠  RECHECK";
     const packedBy  = c.packed_by ? "Packed: " + esc(c.packed_by) : "";
-    const dispNo    = lot ? (stickerIdx + 1) : Number(c.carton_no);
+    const dispNo    = stickerIdx + 1;
     return `<div class="sticker">
       <div class="sh">
         <div class="sl">${branding ? `<img src="/assets/logo.jpeg" style="max-height:10mm;max-width:36mm;object-fit:contain" onerror="this.style.display='none'">` : `<span style="font-size:11px;font-weight:900">CERADRIVE</span>`}</div>
@@ -3159,7 +3183,7 @@ function _renderTopbar() {
     <img src="assets/logo.jpeg" alt="Ceradrive">
     <div>
       <div style="font-weight:700;font-size:16px;">Ceradrive Brakes</div>
-      <div style="font-size:12px;color:#6b7280;">QC Packing System v8.5.3</div>
+      <div style="font-size:12px;color:#6b7280;">QC Packing System v8.5.4</div>
     </div>
   </div>`;
 }
@@ -3224,8 +3248,7 @@ window.addEventListener("offline", () => _showOfflineIndicator(true));
 
 // Close the "More" tab menu when clicking outside it
 document.addEventListener("click", e => {
-  const wrap = document.querySelector(".tab-more-wrap");
-  if (wrap && !wrap.contains(e.target)) closeMoreMenu();
+  // More menu removed; no outside-click handler needed.
 });
 
 /* ── Kick it off ─────────────────────────────────────────────── */

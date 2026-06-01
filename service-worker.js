@@ -1,6 +1,6 @@
-// ── Service Worker — Ceradrive v8.5.3 ──────────────────────────────────────
+// ── Service Worker — Ceradrive v8.5.5 ──────────────────────────────────────
 // Version bumped to match app version so the cache auto-updates on deploy.
-const CACHE_NAME = "ceradrive-v8-5-3-cache-v1";
+const CACHE_NAME = "ceradrive-v8-5-5-cache-v1";
 const ASSETS = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json", "/assets/logo.jpeg"];
 
 self.addEventListener("install", e => {
