@@ -1,10 +1,10 @@
 {
-  "name": "Ceradrive QC Packing App v8.0.2",
-  "short_name": "QC Packing",
+  "name": "Ceradrive QC Packing v8.5.1",
+  "short_name": "Ceradrive v8.5.1",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b2940",
-  "theme_color": "#0b2940",
+  "background_color": "#f5f5f7",
+  "theme_color": "#f5f5f7",
   "icons": [
     {
       "src": "assets/icon-192.png",
@@ -19,7 +19,7 @@
   ],
   "description": "Ceradrive QC Packing & Dispatch Verification App for brake pad packing, weight verification and dispatch management.",
   "orientation": "portrait",
-  "id": "ceradrive-qc-packing-v8-0",
+  "id": "ceradrive-qc-packing-v7-7-9",
   "lang": "en-US",
   "dir": "ltr",
   "scope": "/"
